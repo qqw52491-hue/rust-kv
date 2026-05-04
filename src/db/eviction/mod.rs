@@ -258,7 +258,6 @@ impl KvOperator for DirectCacheNode {
                 // 2. 更新 LRU (内部可变性，微小开销)
                 // 这里的 await 只是为了拿那个极短的 Mutex，不会阻塞太久
                 eviction.lock().await.on_read(key);
-
                 // 3. 查数据
                 if let Some(value) = store.get(key) {
                     // 4. 检查过期
