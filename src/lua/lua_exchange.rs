@@ -5,7 +5,7 @@ use crate::error::Frame;
 
 /// 辅助函数：将单个 Lua Value 转换为用于命令参数的 Frame::Bulk
 /// 几乎所有东西都被转为字符串/字节。
-pub fn lua_value_to_bulk_frame(value: Value<'_>) -> Result<Frame,mlua::Error> {
+pub fn lua_value_to_bulk_frame(value: Value<'_>) -> Result<Frame, mlua::Error> {
     let bytes = match value {
         // Lua nil 作为参数时，等同于空字符串
         Value::Nil => Bytes::new(),
@@ -30,7 +30,10 @@ pub fn lua_value_to_bulk_frame(value: Value<'_>) -> Result<Frame,mlua::Error> {
         | Value::LightUserData(_)
         | Value::Error(_) => {
             // 打印具体的类型信息
-            eprintln!("CRITICAL DEBUG: Lua 传给 redis.call 的参数类型不对！接收到的参数是: {:?}", value);
+            eprintln!(
+                "CRITICAL DEBUG: Lua 传给 redis.call 的参数类型不对！接收到的参数是: {:?}",
+                value
+            );
             return Err(mlua::Error::runtime("invalid argument type for redis.call"));
         }
     };

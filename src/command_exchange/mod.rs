@@ -1,10 +1,10 @@
-use std::{ vec::IntoIter};
+use std::vec::IntoIter;
 
 use bytes::Bytes;
 
 use crate::error::{Command, Frame, KvError};
-mod string;
 mod common;
+mod string;
 /// 尝试从一个 Frame 中提取出 Bulk String 并转换为 String
 pub fn extract_bulk_string(frame: Option<Frame>) -> Result<String, KvError> {
     match frame {
@@ -17,7 +17,9 @@ pub fn extract_bulk_string(frame: Option<Frame>) -> Result<String, KvError> {
 
 /// 尝试从一个 Frame 中提取出 Bulk String 并转换为 String
 fn extract_bulk_integer(frame: Option<Frame>) -> Result<i64, KvError> {
-    extract_bulk_string(frame)?.parse::<i64>().map_err(|e|KvError::ProtocolError(e.to_string()))
+    extract_bulk_string(frame)?
+        .parse::<i64>()
+        .map_err(|e| KvError::ProtocolError(e.to_string()))
 }
 
 /// 尝试从一个 Frame 中提取出 Bulk Bytes
@@ -29,5 +31,5 @@ fn extract_bulk_bytes(frame: Option<Frame>) -> Result<Bytes, KvError> {
 }
 
 pub trait CommandExchange {
-     fn exchange( itor: IntoIter<Frame>,command_name:String) -> Result<Command, KvError>;
+    fn exchange(itor: IntoIter<Frame>, command_name: String) -> Result<Command, KvError>;
 }

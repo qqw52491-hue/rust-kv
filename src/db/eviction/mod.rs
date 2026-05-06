@@ -198,7 +198,7 @@ impl KvOperator for DirectCacheNode {
                         .fetch_sub(value.data_size, Ordering::Relaxed);
                 }
             }
-            DirectCacheNode::Readguard(rw_lock_read_guard) => {}
+            DirectCacheNode::Readguard(_rw_lock_read_guard) => {}
         }
     }
 
@@ -395,6 +395,7 @@ impl MemoryCache {
             // 假设 LruMemoryCache 也有一个 new()
             local_vec.push(Arc::new(RwLock::new(MemoryCacheNode::new(config_type))));
         }
+
         MemoryCache { message: local_vec }
     }
 

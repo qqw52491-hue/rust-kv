@@ -1,9 +1,9 @@
+use crate::Db;
 use crate::aof_exchange::AofContent;
 use crate::command_execute::{CommandContext, CommandExecutor};
 use crate::context::ConnectionContent;
 use crate::db::LockedDb;
 use crate::error::{Command, Frame, KvError};
-use crate::Db;
 
 // 假定：Command: Clone
 pub async fn execute_command(command: Command, db: &Db) -> Result<Frame, KvError> {
@@ -91,10 +91,12 @@ pub async fn execute_command_normal(
     )
     .await?;
     //在这里同意执行aof 正常情况下的限定执行
-    command.exe_aof_command(AofContent {
-        aof_tx: &connect_content.aof_tx,
-        shutdown_tx: &connect_content.shutdown_tx,
-    }).await;
+    command
+        .exe_aof_command(AofContent {
+            aof_tx: &connect_content.aof_tx,
+            shutdown_tx: &connect_content.shutdown_tx,
+        })
+        .await;
     Ok(frame)
 }
 
