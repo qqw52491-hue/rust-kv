@@ -22,7 +22,7 @@ pub struct LuaTask {
 pub struct CurrentRequestEnv {
     pub ctx: CommandContext, // 你的环境            // 你的环境
     pub sessions: Arc<Mutex<HashMap<usize, LockedDb>>>, // 你的锁 (直接用 HashMap，不需要 Arc Mutex)
-    pub command:  EvalCommand,
+    pub command: EvalCommand,
 }
 
 thread_local! {
@@ -71,7 +71,6 @@ pub fn start_multi_lua_actor(worker_num: usize, queue_size: usize) -> LuaRouter 
     for i in 0..worker_num {
         let (tx, mut rx) = mpsc::channel::<LuaTask>(queue_size);
         senders.push(tx);
-
         thread::spawn(move || {
             //独占环境
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -91,7 +90,7 @@ pub fn start_multi_lua_actor(worker_num: usize, queue_size: usize) -> LuaRouter 
                     let sender = task.resp;
                     let result = CONN_STATE
                         .scope(task.connect_state, async {
-                            init_lua_pre(&lua, &task.command,task.ctx).await;
+                            init_lua_pre(&lua, &task.command, task.ctx).await;
                             EvalCommand::lua_vm_redis_call(&(task.command), &lua).await
                         })
                         .await;

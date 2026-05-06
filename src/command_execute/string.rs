@@ -55,7 +55,6 @@ impl CommandExecutor for GetCommand {
         match value {
             Some(entry) => {
                 let data = entry.data.clone();
-
                 //这是处理字符串的方法
                 match data {
                     Value::Simple(Element::String(bytes)) => Ok(Frame::Bulk(bytes)),
