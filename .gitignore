@@ -3,3 +3,5 @@
 *.log
 
 /target
+# macOS
+.DS_Store

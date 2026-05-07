@@ -21,7 +21,7 @@ use crate::core_aof::{AofMessage, aof_writer_task, explain_execute_aofcommand};
 use crate::core_time::start_time_caching_task;
 use crate::db::Db;
 use crate::lua::lua_vm::init_lua_vm;
-use crate::lua::lua_work::start_lua_actor;
+use crate::lua::lua_work::start_multi_lua_actor;
 use crate::server::handle_connection;
 use crate::shutdown::{ShutDown, shutdown_listener};
 use mlua::Lua;
@@ -35,8 +35,8 @@ use tokio::sync::{Mutex, broadcast};
    各种服务的编排和关联
  */
 pub async fn run() {
-    // 创建一个容量为 1024 的管道
-    let (aof_tx, rx) = mpsc::channel::<AofMessage>(1024);
+    // 这个通道必须要大 这个事最基本的事情
+    let (aof_tx, rx) = mpsc::channel::<AofMessage>(1000000);
     //获取类型 这个广播
     let (app_shutdown_tx, _) = broadcast::channel::<()>(1);
 
@@ -50,7 +50,7 @@ pub async fn run() {
     let (lua_runtime,lua_handle) = init_lua_vm(lua_vm_sender).await;
 
     //初始化并且直接获取sender
-    let lua_sender = start_lua_actor();
+    let lua_sender = start_multi_lua_actor(8,100000);
 
     let aop_file_path = "database.aof";
     // 启动专门的 AOF 写入后台任务
@@ -132,7 +132,7 @@ pub async fn run() {
                 }
             };
             // let (socket, _) = listener.accept().await;
-            tracing::info!("接收到新连接");
+            //tracing::info!("接收到新连接");
             let db = db.clone();
 
             let initial_state = ConnectionState {

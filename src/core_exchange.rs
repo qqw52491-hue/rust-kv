@@ -1,8 +1,7 @@
-
 use crate::command_exchange::CommandExchange;
 use crate::error::KvError::ProtocolError;
 use crate::error::{
-    Command, EvalCommand, Frame, GetCommand, KvError, PingCommand, SetCommand, UnimplementCommand
+    Command, EvalCommand, Frame, GetCommand, KvError, PingCommand, SetCommand, UnimplementCommand,
 };
 
 impl TryFrom<Frame> for Command {

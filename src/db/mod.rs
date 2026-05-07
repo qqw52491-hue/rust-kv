@@ -12,9 +12,7 @@ mod string;
 use crate::{
     config::EvictionType,
     context::CONN_STATE,
-    db::eviction::{
-        KvOperator, LockOwner, MemoryCache,
-    },
+    db::eviction::{KvOperator, LockOwner, MemoryCache},
 };
 
 // 3. 定义并公开那个唯一的、组合好的顶层结构
@@ -82,20 +80,28 @@ impl Storage {
      */
     pub async fn lock_write_lua<'a>(&'a self, shard_index: usize) -> LockedDb {
         let select_db = CONN_STATE.with(|state| state.selected_db);
-        LockedDb::Write(self.store.get(select_db).unwrap().get_lua_lock_write_shard_index(shard_index).await)
+        LockedDb::Write(
+            self.store
+                .get(select_db)
+                .unwrap()
+                .get_lua_lock_write_shard_index(shard_index)
+                .await,
+        )
     }
 
-    pub async fn lock_read_lua<'a>(&'a self, shard_index: usize) -> LockedDb  {
+    pub async fn lock_read_lua<'a>(&'a self, shard_index: usize) -> LockedDb {
         let select_db = CONN_STATE.with(|state| state.selected_db);
-        LockedDb::Read(self.store.get(select_db).unwrap().get_lock_read_shard_index(shard_index).await)
+        LockedDb::Read(
+            self.store
+                .get(select_db)
+                .unwrap()
+                .get_lock_read_shard_index(shard_index)
+                .await,
+        )
     }
 
     // 修改后（正确）：
-    pub async fn get_lock_write(
-        &self,
-        db_index: usize,
-        shard_index: usize,
-    ) -> Box<dyn LockOwner> {
+    pub async fn get_lock_write(&self, db_index: usize, shard_index: usize) -> Box<dyn LockOwner> {
         self.store
             .get(db_index)
             .unwrap()
@@ -106,16 +112,15 @@ impl Storage {
     }
 
     // 修改后（正确）：
-    pub async fn get_lock_read(
-        &self,
-        db_index: usize,
-        shard_index: usize,
-    ) -> Box<dyn LockOwner>  {
+    pub async fn get_lock_read(&self, db_index: usize, shard_index: usize) -> Box<dyn LockOwner> {
         self.store
             .get(db_index)
-            .unwrap().clone().get_lock_read_shard_index(shard_index)
+            .unwrap()
+            .clone()
+            .get_lock_read_shard_index(shard_index)
             .await
-            .as_lock_owner().unwrap()
+            .as_lock_owner()
+            .unwrap()
     }
 }
 

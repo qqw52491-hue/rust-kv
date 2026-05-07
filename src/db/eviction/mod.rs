@@ -16,8 +16,7 @@ pub mod eviction_alo;
 pub mod lfu;
 pub mod lru;
 
-pub const NUM_SHARDS: usize = 32; // 32 个分片
-pub const NUM_DBS: usize = 32; // 32 个分片
+pub const NUM_SHARDS: usize = 64; // 64 个分片
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TtlEntry {
     expires_at: u64,
@@ -199,7 +198,7 @@ impl KvOperator for DirectCacheNode {
                         .fetch_sub(value.data_size, Ordering::Relaxed);
                 }
             }
-            DirectCacheNode::Readguard(rw_lock_read_guard) => {}
+            DirectCacheNode::Readguard(_rw_lock_read_guard) => {}
         }
     }
 
@@ -259,7 +258,6 @@ impl KvOperator for DirectCacheNode {
                 // 2. 更新 LRU (内部可变性，微小开销)
                 // 这里的 await 只是为了拿那个极短的 Mutex，不会阻塞太久
                 eviction.lock().await.on_read(key);
-
                 // 3. 查数据
                 if let Some(value) = store.get(key) {
                     // 4. 检查过期
@@ -396,6 +394,7 @@ impl MemoryCache {
             // 假设 LruMemoryCache 也有一个 new()
             local_vec.push(Arc::new(RwLock::new(MemoryCacheNode::new(config_type))));
         }
+
         MemoryCache { message: local_vec }
     }
 

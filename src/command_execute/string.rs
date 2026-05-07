@@ -4,12 +4,19 @@ use crate::{
     command_execute::{
         CommandContext, CommandExecutor, bytes_to_i64_fast, calculate_expiration_timestamp_ms,
         parse_int_from_bytes,
-    }, db::LockedDb, error::{Frame, GetCommand, KvError, SetCommand}, types::{Element, Value, ValueEntry}
+    },
+    db::LockedDb,
+    error::{Frame, GetCommand, KvError, SetCommand},
+    types::{Element, Value, ValueEntry},
 };
 
 impl CommandExecutor for SetCommand {
     // 必须在这里也加上 <'ctx> 和对应的生命周期标注
-    async fn execute(&self, ctx: CommandContext,db_lock: Option<& mut LockedDb>) -> Result<Frame, KvError> {
+    async fn execute(
+        &self,
+        ctx: CommandContext,
+        db_lock: Option<&mut LockedDb>,
+    ) -> Result<Frame, KvError> {
         let time_expire_u64: Option<u64>;
         let time_expire = if let Some(expire) = &self.expiration {
             time_expire_u64 = Some(calculate_expiration_timestamp_ms(expire));
@@ -20,10 +27,13 @@ impl CommandExecutor for SetCommand {
         //再这里创建value
         let value_obj = match bytes_to_i64_fast(&self.value) {
             Some(i) => ValueEntry::new(Value::Simple(Element::Int(i)), time_expire),
-            None => ValueEntry::new(Value::Simple(Element::String(self.value.clone())), time_expire),
+            None => ValueEntry::new(
+                Value::Simple(Element::String(self.value.clone())),
+                time_expire,
+            ),
         };
         //ctx.db_lock.unwrap().set_string(self.key.clone(), value_obj);
-        if let Some(LockedDb::Write(  map)) = db_lock {
+        if let Some(LockedDb::Write(map)) = db_lock {
             map.insert(self.key.clone(), value_obj).await;
         }
         Ok(Frame::Simple("OK".to_string()))
@@ -35,17 +45,16 @@ impl CommandExecutor for GetCommand {
         &self,
         // 2. 将这个生命周期 'ctx 应用到 CommandContext 的引用上
         _ctx: CommandContext,
-        db_lock: Option<& mut LockedDb>
+        db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
-        let value= if let Some(LockedDb::Read( map)) = db_lock {
+        let value = if let Some(LockedDb::Read(map)) = db_lock {
             map.select(&self.key.clone()).await
-        }else {
+        } else {
             None
         };
         match value {
             Some(entry) => {
                 let data = entry.data.clone();
-
                 //这是处理字符串的方法
                 match data {
                     Value::Simple(Element::String(bytes)) => Ok(Frame::Bulk(bytes)),
