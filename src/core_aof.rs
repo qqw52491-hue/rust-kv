@@ -128,23 +128,23 @@ pub async fn explain_execute_aofcommand(
 
         loop {
             if data.len() == 0 {
-                return Ok(())
+                break; // 如果刚好把数据完整读完，应该 break 去外层继续读文件，而不是直接 return 结束
             }
             match parse_frame(data) {
                 Ok(frame) => match frame {
                     //这个分支只有不可变
-                    Some((frame, size)) => {
+                    Some((frame, frame_size)) => { // 重命名为 frame_size 避免遮蔽外层的 size
                         match Command::try_from(frame) {
                             Ok(frame) => {
                                 execute_command(frame, db).await?;
-                                data = &data[size..];
+                                data = &data[frame_size..];
                                 exec_time += 1;
                             }
                             Err(e) => {
                                 return Err(e.into());
                             }
                         };
-                        tail_size = size;
+                        tail_size += frame_size; // 这里必须是累加，记录当前这批数据一共消耗了多少字节
                     }
                     //这个分支有可变的复制 但是并没有使用可变 但是直接使用了对象  对象 不可变 可变三者交叉使用
                     //只要每个域都没有问题 就可以交叉使用 没有问题
