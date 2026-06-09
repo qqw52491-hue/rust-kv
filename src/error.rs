@@ -28,7 +28,9 @@ pub enum Command {
     Get(GetCommand),
     Ping(PingCommand),
     Unimplement(UnimplementCommand),
-    EvalCommand(EvalCommand)
+    EvalCommand(EvalCommand),
+    LPush(LPushCommand),
+    LPop(LPopCommand),
 }
 
 // 每一个 struct 现在都是一个独立的、清晰的命令“实体”
@@ -61,6 +63,17 @@ pub struct EvalCommand {
     pub script: String,
     pub keys:Vec<String>,
     pub args:Vec<String>
+}
+
+#[derive(Debug, Clone)]
+pub struct LPushCommand {
+    pub key: Arc<String>,
+    pub values: Vec<Bytes>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LPopCommand {
+    pub key: Arc<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +115,8 @@ impl Command {
         match self {
             Command::Set(set_command) => Some(&set_command.key),
             Command::Get(get_command) => Some(&get_command.key),
+            Command::LPush(lpush_command) => Some(&lpush_command.key),
+            Command::LPop(lpop_command) => Some(&lpop_command.key),
             Command::Ping(_ping_command) => None,
             Command::Unimplement(_unimplement_command) => None,
             Command::EvalCommand(_eval_command) => None,

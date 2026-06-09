@@ -6,6 +6,7 @@ use tokio::sync::mpsc::Sender;
 use crate::{core_time::get_cached_time_ms, error::Command};
 
 mod string;
+mod list;
 
 pub trait CommandAofExchange {
     // execute 方法現在接收 CommandContext 作為參數！
@@ -25,7 +26,8 @@ impl Command {
     pub async fn exe_aof_command<'a>(&self, ctx: AofContent<'a>) {
         match self {
             Command::Set(set_command) => set_command.execute_aof(ctx).await,
-            // 把里面的变量都换成 _，表示“我不关心里面是啥”
+            Command::LPush(lpush_command) => lpush_command.execute_aof(ctx).await,
+            Command::LPop(lpop_command) => lpop_command.execute_aof(ctx).await,
             Command::Get(_)
             | Command::Ping(_)
             | Command::Unimplement(_)

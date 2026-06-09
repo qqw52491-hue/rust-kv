@@ -110,14 +110,12 @@ pub async fn explain_execute_aofcommand(
     let mut file = File::open(path)?;
     //单线程恢复可以很大
     let mut file_data: Vec<u8> = vec![0; 1024 * 1024 * 512];
-    //这个是应该写的区域 会随着不断变化
-    let mut file_data_ref = &mut file_data[..];
     let mut exec_time;
     let mut tail_file_length = 0;
     //这个默认恢复从0 开始 
     //let mut conn_state = ConnectionState { selected_db: 0 ,client_address: None};
     loop {
-        let size: usize = file.read(file_data_ref)? + tail_file_length;
+        let size: usize = file.read(&mut file_data[tail_file_length..])? + tail_file_length;
         let mut tail_size: usize = 0;
         let mut data: &[u8] = &file_data[0..size];
         
@@ -151,7 +149,6 @@ pub async fn explain_execute_aofcommand(
                     None => {
                         file_data.copy_within(tail_size..size, 0);
                         // 5. 将剩下的数据移动到缓冲区头部
-                        file_data_ref = &mut file_data[(size - tail_size)..];
                         tail_file_length = size - tail_size;
                         if exec_time == 0 {
                             return Err("字符串文件过大 大于512M".into());

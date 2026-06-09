@@ -2,6 +2,7 @@ use crate::command_exchange::CommandExchange;
 use crate::error::KvError::ProtocolError;
 use crate::error::{
     Command, EvalCommand, Frame, GetCommand, KvError, PingCommand, SetCommand, UnimplementCommand,
+    LPushCommand, LPopCommand,
 };
 
 impl TryFrom<Frame> for Command {
@@ -35,6 +36,18 @@ impl TryFrom<Frame> for Command {
                             return Err(ProtocolError("frame is too short".into()));
                         }
                         SetCommand::exchange(iter, command_name)
+                    }
+                    "LPUSH" => {
+                        if length < 3 {
+                            return Err(ProtocolError("LPUSH 命令需要至少 2 个参数".into()));
+                        }
+                        LPushCommand::exchange(iter, command_name)
+                    }
+                    "LPOP" => {
+                        if length != 2 {
+                            return Err(ProtocolError("LPOP 命令需要 1 个参数".into()));
+                        }
+                        LPopCommand::exchange(iter, command_name)
                     }
                     "PING" => PingCommand::exchange(iter, command_name),
                     //lua 脚本

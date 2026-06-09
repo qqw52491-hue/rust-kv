@@ -72,6 +72,26 @@ pub async fn execute_command_hook<'a>(
                 )
                 .await
         }
+        Command::LPush(lpush) => {
+            lpush.execute(
+                CommandContext {
+                    db: None,
+                    connect_content,
+                },
+                db_lock,
+            )
+            .await
+        }
+        Command::LPop(lpop) => {
+            lpop.execute(
+                CommandContext {
+                    db: None,
+                    connect_content,
+                },
+                db_lock,
+            )
+            .await
+        }
     }
 }
 
@@ -104,6 +124,8 @@ pub async fn get_command_lock<'a>(command: &Command, db: &'a Db) -> Option<Locke
     match command {
         Command::Set(set_command) => db.store.lock_write(&set_command.key).await.into(),
         Command::Get(get_command) => db.store.lock_read(&get_command.key).await.into(),
+        Command::LPush(lpush_command) => db.store.lock_write(&lpush_command.key).await.into(),
+        Command::LPop(lpop_command) => db.store.lock_write(&lpop_command.key).await.into(),
         Command::Ping(_) => None,
         Command::Unimplement(_) => None,
         Command::EvalCommand(_) => None,

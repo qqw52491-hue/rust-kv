@@ -66,6 +66,31 @@ impl KvOperator for LuaCacheNode {
         }
     }
 
+    async fn take(&mut self, key: &Arc<String>) -> Option<ValueEntry> {
+        if let Some(change) = self.differ_map.remove(key) {
+            match change {
+                ChangeOp::Update(value_entry) => {
+                    self.local_memory_diff -= value_entry.data_size as isize;
+                    self.differ_map.insert(key.clone(), ChangeOp::Delete);
+                    return Some(value_entry);
+                }
+                ChangeOp::Delete => {
+                    self.differ_map.insert(key.clone(), ChangeOp::Delete);
+                    return None;
+                }
+            }
+        }
+
+        if let Some(value_entry) = self.db_store.select(key).await {
+            let cloned_entry = value_entry.clone();
+            self.differ_map.insert(key.clone(), ChangeOp::Delete);
+            self.local_memory_diff -= cloned_entry.data_size as isize;
+            Some(cloned_entry)
+        } else {
+            None
+        }
+    }
+
     //说明一下 这个usize 转 isize 就是在小于800万TB都是没问题  位数足够大 一般不会超过这个的感觉
     async fn delete(&mut self, key: &Arc<String>) {
         let size_before = match self.select(&key).await {
@@ -199,6 +224,28 @@ impl KvOperator for DirectCacheNode {
                 }
             }
             DirectCacheNode::Readguard(_rw_lock_read_guard) => {}
+        }
+    }
+
+    async fn take(&mut self, key: &Arc<String>) -> Option<ValueEntry> {
+        match self {
+            DirectCacheNode::Writeguard(rw_lock_write_guard) => {
+                if let Some(value) = rw_lock_write_guard.db_store.remove(key) {
+                    //触发淘汰策略
+                    rw_lock_write_guard
+                        .evicition
+                        .lock()
+                        .await
+                        .on_delete(key.clone());
+                    rw_lock_write_guard
+                        .approx_memory
+                        .fetch_sub(value.data_size, Ordering::Relaxed);
+                    Some(value)
+                } else {
+                    None
+                }
+            }
+            DirectCacheNode::Readguard(_rw_lock_read_guard) => None,
         }
     }
 
@@ -350,6 +397,7 @@ pub struct MemoryCache {
 pub trait KvOperator: Send + Sync {
     async fn insert(&mut self, key: Arc<String>, value: ValueEntry);
     async fn select(&mut self, key: &Arc<String>) -> Option<&ValueEntry>;
+    async fn take(&mut self, key: &Arc<String>) -> Option<ValueEntry>;
     async fn delete(&mut self, key: &Arc<String>);
 
     // 【核心修改】

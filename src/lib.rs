@@ -181,3 +181,80 @@ pub async fn run() {
     //收集关联后开启监听线程
     shutdown.shutdown().await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::error::{Command, Frame};
+    use crate::core_execute::{execute_command_hook, get_command_lock};
+    use crate::context::{CONN_STATE, ConnectionState};
+    use bytes::Bytes;
+
+    #[tokio::test]
+    async fn test_list_lpush_lpop() {
+        let initial_state = ConnectionState {
+            selected_db: 0,
+            client_address: None,
+        };
+
+        CONN_STATE.scope(initial_state, async {
+            // 1. 初始化数据库
+            let db = Db::new(&crate::config::EvictionType::LRU);
+            
+            // 2. 用 Frame 模拟客户端发送的 LPUSH 请求，测试解析和转换层
+            let lpush_frame = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("LPUSH")),
+                Frame::Bulk(Bytes::from("mylist")),
+                Frame::Bulk(Bytes::from("val1")),
+                Frame::Bulk(Bytes::from("val2")),
+            ]);
+            
+            let lpush_cmd = Command::try_from(lpush_frame).expect("解析 LPUSH 命令失败");
+            
+            // 3. 获取锁并执行 LPUSH
+            let mut lock = get_command_lock(&lpush_cmd, &db).await;
+            let lpush_resp = execute_command_hook(&lpush_cmd, Some(db.clone()), None, lock.as_mut())
+                .await
+                .expect("LPUSH 执行失败");
+                
+            // LPUSH 放入 2 个值后应该返回列表长度 2
+            assert_eq!(lpush_resp, Frame::Integer(2));
+            drop(lock);
+            
+            // 4. 模拟客户端发送的 LPOP 动作
+            let lpop_frame = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("LPOP")),
+                Frame::Bulk(Bytes::from("mylist")),
+            ]);
+            let lpop_cmd = Command::try_from(lpop_frame).expect("解析 LPOP 命令失败");
+            
+            // 5. 获取锁并执行第一弹 LPOP
+            // 因为 LPUSH 是从前部推入 (push_front) 元素，推入顺序是 "val1" 然后 "val2"
+            // 最终列表状态应为: ["val2", "val1"]
+            // 所以第一个 LPOP 出来的应该是 "val2"
+            let mut lock = get_command_lock(&lpop_cmd, &db).await;
+            let lpop_resp1 = execute_command_hook(&lpop_cmd, Some(db.clone()), None, lock.as_mut())
+                .await
+                .expect("LPOP 1 执行失败");
+            assert_eq!(lpop_resp1, Frame::Bulk(Bytes::from("val2")));
+            drop(lock);
+            
+            // 6. 执行 second LPOP
+            let mut lock = get_command_lock(&lpop_cmd, &db).await;
+            let lpop_resp2 = execute_command_hook(&lpop_cmd, Some(db.clone()), None, lock.as_mut())
+                .await
+                .expect("LPOP 2 执行失败");
+            assert_eq!(lpop_resp2, Frame::Bulk(Bytes::from("val1")));
+            drop(lock);
+            
+            // 7. 执行第三弹 LPOP (列表空，应该返回 Null)
+            let mut lock = get_command_lock(&lpop_cmd, &db).await;
+            let lpop_resp3 = execute_command_hook(&lpop_cmd, Some(db.clone()), None, lock.as_mut())
+                .await
+                .expect("LPOP 3 执行失败");
+            assert_eq!(lpop_resp3, Frame::Null);
+            drop(lock);
+        }).await;
+    }
+}
