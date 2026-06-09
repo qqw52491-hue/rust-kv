@@ -187,7 +187,8 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::error::{Command, Frame};
-    use crate::core_execute::{execute_command_hook, get_command_lock};
+    use crate::core_execute::get_command_lock;
+    use crate::command_execute::{CommandContext, CommandExecutor};
     use crate::context::{CONN_STATE, ConnectionState};
     use bytes::Bytes;
 
@@ -202,7 +203,7 @@ mod tests {
             // 1. 初始化数据库
             let db = Db::new(&crate::config::EvictionType::LRU);
             
-            // 2. 用 Frame 模拟客户端发送的 LPUSH 请求，测试解析和转换层
+            // 2. 用 Frame 模拟客户端发送 of LPUSH 请求，测试解析和转换层
             let lpush_frame = Frame::Array(vec![
                 Frame::Bulk(Bytes::from("LPUSH")),
                 Frame::Bulk(Bytes::from("mylist")),
@@ -214,7 +215,11 @@ mod tests {
             
             // 3. 获取锁并执行 LPUSH
             let mut lock = get_command_lock(&lpush_cmd, &db).await;
-            let lpush_resp = execute_command_hook(&lpush_cmd, Some(db.clone()), None, lock.as_mut())
+            let ctx = CommandContext {
+                db: Some(db.clone()),
+                connect_content: None,
+            };
+            let lpush_resp = lpush_cmd.execute(ctx, lock.as_mut())
                 .await
                 .expect("LPUSH 执行失败");
                 
@@ -234,7 +239,11 @@ mod tests {
             // 最终列表状态应为: ["val2", "val1"]
             // 所以第一个 LPOP 出来的应该是 "val2"
             let mut lock = get_command_lock(&lpop_cmd, &db).await;
-            let lpop_resp1 = execute_command_hook(&lpop_cmd, Some(db.clone()), None, lock.as_mut())
+            let ctx1 = CommandContext {
+                db: Some(db.clone()),
+                connect_content: None,
+            };
+            let lpop_resp1 = lpop_cmd.execute(ctx1, lock.as_mut())
                 .await
                 .expect("LPOP 1 执行失败");
             assert_eq!(lpop_resp1, Frame::Bulk(Bytes::from("val2")));
@@ -242,7 +251,11 @@ mod tests {
             
             // 6. 执行 second LPOP
             let mut lock = get_command_lock(&lpop_cmd, &db).await;
-            let lpop_resp2 = execute_command_hook(&lpop_cmd, Some(db.clone()), None, lock.as_mut())
+            let ctx2 = CommandContext {
+                db: Some(db.clone()),
+                connect_content: None,
+            };
+            let lpop_resp2 = lpop_cmd.execute(ctx2, lock.as_mut())
                 .await
                 .expect("LPOP 2 执行失败");
             assert_eq!(lpop_resp2, Frame::Bulk(Bytes::from("val1")));
@@ -250,7 +263,11 @@ mod tests {
             
             // 7. 执行第三弹 LPOP (列表空，应该返回 Null)
             let mut lock = get_command_lock(&lpop_cmd, &db).await;
-            let lpop_resp3 = execute_command_hook(&lpop_cmd, Some(db.clone()), None, lock.as_mut())
+            let ctx3 = CommandContext {
+                db: Some(db.clone()),
+                connect_content: None,
+            };
+            let lpop_resp3 = lpop_cmd.execute(ctx3, lock.as_mut())
                 .await
                 .expect("LPOP 3 执行失败");
             assert_eq!(lpop_resp3, Frame::Null);
