@@ -61,8 +61,8 @@ pub struct UnimplementCommand {
 #[derive(Debug, Clone)]
 pub struct EvalCommand {
     pub script: String,
-    pub keys:Vec<String>,
-    pub args:Vec<String>
+    pub keys: Vec<String>,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,16 +110,30 @@ pub enum IsAof {
     No,
 }
 
+#[derive(Debug)]
+pub enum LockSpec<'a> {
+    Write(&'a Arc<String>),
+    Read(&'a Arc<String>),
+    None,
+}
+
 impl Command {
-    pub fn get_key(&self) -> Option<&Arc<String>>{
+    pub fn lock_spec(&self) -> LockSpec<'_> {
         match self {
-            Command::Set(set_command) => Some(&set_command.key),
-            Command::Get(get_command) => Some(&get_command.key),
-            Command::LPush(lpush_command) => Some(&lpush_command.key),
-            Command::LPop(lpop_command) => Some(&lpop_command.key),
-            Command::Ping(_ping_command) => None,
-            Command::Unimplement(_unimplement_command) => None,
-            Command::EvalCommand(_eval_command) => None,
+            Command::Set(set_command) => LockSpec::Write(&set_command.key),
+            Command::Get(get_command) => LockSpec::Read(&get_command.key),
+            Command::LPush(lpush_command) => LockSpec::Write(&lpush_command.key),
+            Command::LPop(lpop_command) => LockSpec::Write(&lpop_command.key),
+            Command::Ping(_ping_command) => LockSpec::None,
+            Command::Unimplement(_unimplement_command) => LockSpec::None,
+            Command::EvalCommand(_eval_command) => LockSpec::None,
+        }
+    }
+
+    pub fn get_key(&self) -> Option<&Arc<String>> {
+        match self.lock_spec() {
+            LockSpec::Write(key) | LockSpec::Read(key) => Some(key),
+            LockSpec::None => None,
         }
     }
 }

@@ -3,99 +3,35 @@ use crate::aof_exchange::AofContent;
 use crate::command_execute::{CommandContext, CommandExecutor};
 use crate::context::ConnectionContent;
 use crate::db::LockedDb;
-use crate::error::{Command, Frame, KvError};
+use crate::error::{Command, Frame, KvError, LockSpec};
 
 // 假定：Command: Clone
 pub async fn execute_command(command: Command, db: &Db) -> Result<Frame, KvError> {
-    // 在调用时直接转换 None 的类型
-    // 这个调用现在是完全正确的，因为 `HookFn` 的定义和 `execute_command_hook` 的要求完美匹配
-    let result = execute_command_hook(&command, Some(db.clone()), None, None).await;
-    result
+    let ctx = CommandContext {
+        db: Some(db.clone()),
+        connect_content: None,
+    };
+    command.execute(ctx, None).await
 }
 
-pub async fn execute_command_hook<'a>(
-    command: &Command,
-    db: Option<Db>, // post_write_hook 是一个可选的闭包
-    connect_content: Option<ConnectionContent>,
-    db_lock: Option<&mut LockedDb>,
-) -> Result<Frame, KvError> {
-    match command {
-        Command::Get(get) => {
-            get.execute(
-                CommandContext {
-                    db: None,
-                    connect_content,
-                },
-                db_lock,
-            )
-            .await
-        }
-        Command::Set(set) => {
-            set.execute(
-                CommandContext {
-                    db: None,
-                    connect_content,
-                },
-                db_lock,
-            )
-            .await
-        }
-        Command::Ping(ping) => {
-            ping.execute(
-                CommandContext {
-                    db: None,
-                    connect_content,
-                },
-                None,
-            )
-            .await
-        }
-        Command::Unimplement(unimplement) => {
-            unimplement
-                .execute(
-                    CommandContext {
-                        db: None,
-                        connect_content,
-                    },
-                    None,
-                )
-                .await
-        }
-        Command::EvalCommand(eval_command) => {
-            eval_command
-                .execute(
-                    CommandContext {
-                        db: db,
-                        connect_content,
-                    },
-                    None,
-                )
-                .await
-        }
-        Command::LPush(lpush) => {
-            lpush.execute(
-                CommandContext {
-                    db: None,
-                    connect_content,
-                },
-                db_lock,
-            )
-            .await
-        }
-        Command::LPop(lpop) => {
-            lpop.execute(
-                CommandContext {
-                    db: None,
-                    connect_content,
-                },
-                db_lock,
-            )
-            .await
+impl CommandExecutor for Command {
+    async fn execute(
+        &self,
+        ctx: CommandContext,
+        db_lock: Option<&mut LockedDb>,
+    ) -> Result<Frame, KvError> {
+        match self {
+            Command::Get(c) => c.execute(ctx, db_lock).await,
+            Command::Set(c) => c.execute(ctx, db_lock).await,
+            Command::Ping(c) => c.execute(ctx, db_lock).await,
+            Command::Unimplement(c) => c.execute(ctx, db_lock).await,
+            Command::EvalCommand(c) => c.execute(ctx, db_lock).await,
+            Command::LPush(c) => c.execute(ctx, db_lock).await,
+            Command::LPop(c) => c.execute(ctx, db_lock).await,
         }
     }
 }
 
-// AI 提供的正确代码，我帮你整理并解释
 pub async fn execute_command_normal(
     command: Command,
     db: &Db,
@@ -103,13 +39,14 @@ pub async fn execute_command_normal(
 ) -> Result<Frame, KvError> {
     //这里已经是脱离所有权了 开始独立拿出来用了
     let mut lock = get_command_lock(&command, db).await;
-    let frame: Frame = execute_command_hook(
-        &command,
-        Some(db.clone()),
-        Some(connect_content.clone()),
-        lock.as_mut(),
-    )
-    .await?;
+    
+    let ctx = CommandContext {
+        db: Some(db.clone()),
+        connect_content: Some(connect_content.clone()),
+    };
+    
+    let frame: Frame = command.execute(ctx, lock.as_mut()).await?;
+    
     //在这里同意执行aof 正常情况下的限定执行
     command
         .exe_aof_command(AofContent {
@@ -117,18 +54,15 @@ pub async fn execute_command_normal(
             shutdown_tx: &connect_content.shutdown_tx,
         })
         .await;
+        
     Ok(frame)
 }
 
 pub async fn get_command_lock<'a>(command: &Command, db: &'a Db) -> Option<LockedDb> {
-    match command {
-        Command::Set(set_command) => db.store.lock_write(&set_command.key).await.into(),
-        Command::Get(get_command) => db.store.lock_read(&get_command.key).await.into(),
-        Command::LPush(lpush_command) => db.store.lock_write(&lpush_command.key).await.into(),
-        Command::LPop(lpop_command) => db.store.lock_write(&lpop_command.key).await.into(),
-        Command::Ping(_) => None,
-        Command::Unimplement(_) => None,
-        Command::EvalCommand(_) => None,
+    match command.lock_spec() {
+        LockSpec::Write(key) => Some(db.store.lock_write(key).await.into()),
+        LockSpec::Read(key) => Some(db.store.lock_read(key).await.into()),
+        LockSpec::None => None,
     }
 }
 

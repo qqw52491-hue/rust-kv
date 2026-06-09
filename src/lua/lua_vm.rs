@@ -8,7 +8,7 @@ use tokio::{
 };
 
 use crate::{
-    command_execute::CommandContext, context::ConnectionState, core_execute::execute_command_hook, db::{
+    command_execute::{CommandContext, CommandExecutor}, context::ConnectionState, db::{
         LockedDb,
         eviction::{KvOperator, MemoryCache},
     }, error::{Command, EvalCommand, Frame, KvError}, lua::{lua_exchange::lua_value_to_bulk_frame, lua_work::{CURRENT_ENV, CurrentRequestEnv}}
@@ -120,7 +120,11 @@ pub async fn general_lua() -> Result<Lua, KvError> {
                         // 2. 修正了末尾的括号数量
                         // 3. 这一行应该是作为返回值，所以去掉了 let frame = (或者是你确实需要赋值，看下文逻辑)
                         // 这里假设你是想返回 execute_command_hook 的结果：
-                        let frame = execute_command_hook(&command, db_clone, content, lock)
+                        let ctx = CommandContext {
+                            db: db_clone,
+                            connect_content: content,
+                        };
+                        let frame = command.execute(ctx, lock)
                             .await
                             .map_err(|_| mlua::Error::runtime("lua 脚本内部命令执行失败"))
                             .unwrap();
