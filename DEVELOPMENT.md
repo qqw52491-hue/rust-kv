@@ -58,9 +58,9 @@
 
 ---
 
-### 第二步：定义命令结构体与变体 (`src/error.rs`)
+### 第二步：定义命令结构体与变体 (`src/domain/command.rs`)
 
-1. **在 `src/error.rs` 中定义对应的命令实体结构体**：
+1. **在 `src/domain/command.rs` 中定义对应的命令实体结构体**：
    ```rust
    #[derive(Debug, Clone)]
    pub struct LPushCommand {
@@ -87,17 +87,18 @@
        LPop(LPopCommand),
    }
    ```
-3. **在 `Command::get_key()` 中匹配新命令，返回路由键**：
-   这是分片锁分配锁域的核心，凡是带 key 的命令必须在此返回该 key：
+3. **在 `Command::lock_spec()` 中匹配新命令，返回所需的锁与键定义**：
+   这是分片锁分配锁域的核心，凡是带 key 且需要锁定的命令必须在此返回锁类型：
    ```rust
    impl Command {
-       pub fn get_key(&self) -> Option<&Arc<String>> {
+       pub fn lock_spec(&self) -> LockSpec<'_> {
            match self {
-               Command::Set(cmd) => Some(&cmd.key),
-               Command::Get(cmd) => Some(&cmd.key),
-               Command::LPush(cmd) => Some(&cmd.key),
-               Command::LPop(cmd) => Some(&cmd.key),
-               _ => None,
+               Command::Set(cmd) => LockSpec::Write(&cmd.key),
+               Command::Get(cmd) => LockSpec::Read(&cmd.key),
+               Command::LPush(cmd) => LockSpec::Write(&cmd.key),
+               Command::LPop(cmd) => LockSpec::Write(&cmd.key),
+               // 其他不需要锁 key 的命令返回 LockSpec::None
+               _ => LockSpec::None,
            }
        }
    }
@@ -127,7 +128,7 @@
    use std::vec::IntoIter;
    use bytes::Bytes;
    use std::sync::Arc;
-   use crate::error::{Command, Frame, KvError, LPushCommand, LPopCommand};
+   use crate::domain::{Command, Frame, KvError, LPushCommand, LPopCommand};
    use crate::command_exchange::{CommandExchange, extract_bulk_string, extract_bulk_bytes};
 
    impl CommandExchange for LPushCommand {
@@ -159,8 +160,7 @@
    use crate::{
        command_execute::{CommandContext, CommandExecutor},
        db::LockedDb,
-       error::{Frame, KvError, LPushCommand, LPopCommand},
-       types::{Element, Value, ValueEntry},
+       domain::{Frame, KvError, LPushCommand, LPopCommand, Value, ValueEntry, Element},
    };
 
    impl CommandExecutor for LPushCommand {
@@ -231,13 +231,23 @@
        }
    }
    ```
-2. **在 `src/core_execute.rs` 中路由新命令**：
-   * 在 `execute_command_hook()` 中，匹配 `Command::LPush` 和 `Command::LPop`，分别调用其 `execute`。
-   * 在 `get_command_lock()` 中，为这两个命令指定需要的锁：
-     ```rust
-     Command::LPush(cmd) => db.store.lock_write(&cmd.key).await.into(),
-     Command::LPop(cmd) => db.store.lock_write(&cmd.key).await.into(),
-     ```
+2. **在 `src/core_execute.rs` 的 `CommandExecutor` 实现中分发路由**：
+   直接将新增的枚举变体绑定到各自结构体的 `execute` 方法上即可，无需处理中间胶水逻辑：
+   ```rust
+   impl CommandExecutor for Command {
+       async fn execute(
+           &self,
+           ctx: CommandContext,
+           db_lock: Option<&mut LockedDb>,
+       ) -> Result<Frame, KvError> {
+           match self {
+               // ... 其他命令
+               Command::LPush(c) => c.execute(ctx, db_lock).await,
+               Command::LPop(c) => c.execute(ctx, db_lock).await,
+           }
+       }
+   }
+   ```
 
 ---
 
@@ -248,7 +258,8 @@
    将命令参数序列化为标准 RESP 协议帧：
    ```rust
    use crate::aof_exchange::{AofContent, CommandAofExchange};
-   use crate::error::{LPushCommand, LPopCommand};
+   use crate::domain::{LPushCommand, LPopCommand, Frame};
+   use bytes::Bytes;
 
    impl CommandAofExchange for LPushCommand {
        async fn execute_aof<'a>(&self, ctx: AofContent<'a>) {
@@ -288,6 +299,11 @@
 ## 优势与设计精髓
 
 1. **自动兼容多线程 Lua 引擎**：
-   因为你在 `general_lua()` 中对 `redis.call` 进行了底层 `execute_command_hook(...)` 统一调用，因此只需完成上述核心步骤，**所有的 Lua 脚本都会自动支持新命令**！你可以直接在 Lua 中运行 `redis.call('LPUSH', 'list', 'v')`。
+   因为你在 `general_lua` 模块中对 `redis.call` 进行了底层的统一调用，自动组装 `CommandContext` 并直接调用 `command.execute(ctx, lock).await`，因此只需完成上述核心步骤，**所有的 Lua 脚本都会自动支持新命令**！你可以直接在 Lua 中运行 `redis.call('LPUSH', 'list', 'v')`。
 2. **自动集成 ACID 事务隔离与原子性**：
    因为 Lua 中调用的 `insert`/`delete`/`select` 是基于 `LuaCacheNode` 代理的，所有的临时写动作都会暂存在 `differ_map` 中。在脚本出错时依然可以自动 Rollback 事务，无需对新数据结构做任何特殊的事务编码。
+3. **职责划分极其清晰**：
+   * `src/domain/` 存放所有的领域模型定义（Command, Frame, Value 等）。
+   * `src/command_exchange/` 处理报文向命令对象的解析。
+   * `src/command_execute/` 负责具体的命令逻辑执行。
+   * `src/aof_exchange/` 专门将执行成功的写命令序列化写入 AOF。

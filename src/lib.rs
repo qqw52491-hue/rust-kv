@@ -9,10 +9,11 @@ mod core_execute;
 mod core_explain;
 mod core_time;
 mod db;
-mod error;
+mod domain;
+pub use crate::domain::error;
+pub use crate::domain::types;
 mod server;
 mod shutdown;
-mod types;
 mod lua;
 
 use crate::config::CONFIG;
