@@ -8,6 +8,7 @@ use crate::{
  mod common;
  mod string;
  mod list;
+mod hash;
  #[derive(Clone)]
 pub struct CommandContext {
     pub db: Option<Db>,

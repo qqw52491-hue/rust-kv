@@ -275,4 +275,67 @@ mod tests {
             drop(lock);
         }).await;
     }
+
+    #[tokio::test]
+    async fn test_hash_hset_hget_hdel() {
+        let initial_state = ConnectionState {
+            selected_db: 0,
+            client_address: None,
+        };
+
+        CONN_STATE.scope(initial_state, async {
+            let db = Db::new(&crate::config::EvictionType::LRU);
+            
+            // 1. HSET myhash field1 val1 field2 val2
+            let hset_frame = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("HSET")),
+                Frame::Bulk(Bytes::from("myhash")),
+                Frame::Bulk(Bytes::from("field1")),
+                Frame::Bulk(Bytes::from("val1")),
+                Frame::Bulk(Bytes::from("field2")),
+                Frame::Bulk(Bytes::from("val2")),
+            ]);
+            let hset_cmd = Command::try_from(hset_frame).expect("HSET parse fail");
+            let mut lock = get_command_lock(&hset_cmd, &db).await;
+            let ctx = CommandContext { db: Some(db.clone()), connect_content: None };
+            let hset_resp = hset_cmd.execute(ctx, lock.as_mut()).await.expect("HSET exec fail");
+            assert_eq!(hset_resp, Frame::Integer(2));
+            drop(lock);
+
+            // 2. HGET myhash field1
+            let hget_frame = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("HGET")),
+                Frame::Bulk(Bytes::from("myhash")),
+                Frame::Bulk(Bytes::from("field1")),
+            ]);
+            let hget_cmd = Command::try_from(hget_frame.clone()).expect("HGET parse fail");
+            let mut lock = get_command_lock(&hget_cmd, &db).await;
+            let ctx2 = CommandContext { db: Some(db.clone()), connect_content: None };
+            let hget_resp = hget_cmd.execute(ctx2, lock.as_mut()).await.expect("HGET exec fail");
+            assert_eq!(hget_resp, Frame::Bulk(Bytes::from("val1")));
+            drop(lock);
+
+            // 3. HDEL myhash field1 field2
+            let hdel_frame = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("HDEL")),
+                Frame::Bulk(Bytes::from("myhash")),
+                Frame::Bulk(Bytes::from("field1")),
+                Frame::Bulk(Bytes::from("field2")),
+            ]);
+            let hdel_cmd = Command::try_from(hdel_frame).expect("HDEL parse fail");
+            let mut lock = get_command_lock(&hdel_cmd, &db).await;
+            let ctx3 = CommandContext { db: Some(db.clone()), connect_content: None };
+            let hdel_resp = hdel_cmd.execute(ctx3, lock.as_mut()).await.expect("HDEL exec fail");
+            assert_eq!(hdel_resp, Frame::Integer(2));
+            drop(lock);
+
+            // 4. HGET myhash field1 again (should be null)
+            let hget_cmd2 = Command::try_from(hget_frame).expect("HGET parse fail 2");
+            let mut lock = get_command_lock(&hget_cmd2, &db).await;
+            let ctx4 = CommandContext { db: Some(db.clone()), connect_content: None };
+            let hget_resp2 = hget_cmd2.execute(ctx4, lock.as_mut()).await.expect("HGET exec fail 2");
+            assert_eq!(hget_resp2, Frame::Null);
+            drop(lock);
+        }).await;
+    }
 }

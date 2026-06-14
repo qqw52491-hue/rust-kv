@@ -28,6 +28,9 @@ impl CommandExecutor for Command {
             Command::EvalCommand(c) => c.execute(ctx, db_lock).await,
             Command::LPush(c) => c.execute(ctx, db_lock).await,
             Command::LPop(c) => c.execute(ctx, db_lock).await,
+            Command::HSet(c) => c.execute(ctx, db_lock).await,
+            Command::HGet(c) => c.execute(ctx, db_lock).await,
+            Command::HDel(c) => c.execute(ctx, db_lock).await,
         }
     }
 }

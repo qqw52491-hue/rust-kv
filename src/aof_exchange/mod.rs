@@ -7,6 +7,7 @@ use crate::{core_time::get_cached_time_ms, error::Command};
 
 mod string;
 mod list;
+mod hash;
 
 pub trait CommandAofExchange {
     // execute 方法現在接收 CommandContext 作為參數！
@@ -28,11 +29,13 @@ impl Command {
             Command::Set(set_command) => set_command.execute_aof(ctx).await,
             Command::LPush(lpush_command) => lpush_command.execute_aof(ctx).await,
             Command::LPop(lpop_command) => lpop_command.execute_aof(ctx).await,
+            Command::HSet(hset_command) => hset_command.execute_aof(ctx).await,
+            Command::HDel(hdel_command) => hdel_command.execute_aof(ctx).await,
             Command::Get(_)
+            | Command::HGet(_)
             | Command::Ping(_)
             | Command::Unimplement(_)
-            | Command::EvalCommand(_) => {
-            }
+            | Command::EvalCommand(_) => {}
         }
     }
 }

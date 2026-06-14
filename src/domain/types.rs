@@ -15,10 +15,10 @@ pub enum Value {
     // 对于简单的 K-V，值就是一个 Element
     Simple(Element),
 
-    // 集合类型包含的是 Element 的集合
-    List(VecDeque<Element>),
-    Hash(HashMap<String, Element>), // Hash 的 value 也是 Element
-    Set(HashSet<Element>),
+    // 集合类型包含的是 Element 的集合，并且带有第二个 usize 参数来追踪元素的总堆内存大小
+    List(VecDeque<Element>, usize),
+    Hash(HashMap<String, Element>, usize), // Hash 的 value 也是 Element
+    Set(HashSet<Element>, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -38,28 +38,22 @@ impl Value {
             // 所以这里只加 bytes 的 len
             Value::Simple(el) => el.heap_size(),
 
-            Value::List(deque) => {
+            Value::List(deque, elements_heap) => {
                 // VecDeque 本身有一定的堆预分配空间 (capacity)
-                // 这里简化计算：元素总堆大小 + 容器基础堆开销
-                let elements_heap: usize = deque.iter().map(|e| e.heap_size()).sum();
                 // deque.capacity() * size_of::<Element>() 是它在堆上占用的连续内存
                 let container_heap = deque.capacity() * std::mem::size_of::<Element>();
-                elements_heap + container_heap
+                *elements_heap + container_heap
             },
 
-            Value::Hash(map) => {
-                let elements_heap: usize = map.iter()
-                    .map(|(k, v)| k.len() + v.heap_size()) // Key string 也在堆上
-                    .sum();
+            Value::Hash(map, elements_heap) => {
                 // HashMap 的 bucket 数组在堆上
                 let container_heap = map.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<Element>());
-                elements_heap + container_heap
+                *elements_heap + container_heap
             },
 
-            Value::Set(set) => {
-                let elements_heap: usize = set.iter().map(|e| e.heap_size()).sum();
+            Value::Set(set, elements_heap) => {
                 let container_heap = set.capacity() * std::mem::size_of::<Element>();
-                elements_heap + container_heap
+                *elements_heap + container_heap
             }
         }
     }

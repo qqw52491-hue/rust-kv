@@ -6,6 +6,7 @@ use crate::error::{Command, Frame, KvError};
 mod common;
 mod string;
 mod list;
+mod hash;
 /// 尝试从一个 Frame 中提取出 Bulk String 并转换为 String
 pub fn extract_bulk_string(frame: Option<Frame>) -> Result<String, KvError> {
     match frame {

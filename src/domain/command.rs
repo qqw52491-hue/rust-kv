@@ -13,6 +13,9 @@ pub enum Command {
     EvalCommand(EvalCommand),
     LPush(LPushCommand),
     LPop(LPopCommand),
+    HSet(HSetCommand),
+    HGet(HGetCommand),
+    HDel(HDelCommand),
 }
 
 // ─────────────────────────────────────────────
@@ -30,6 +33,24 @@ pub struct SetCommand {
 #[derive(Debug, Clone)]
 pub struct GetCommand {
     pub key: Arc<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HSetCommand {
+    pub key: Arc<String>,
+    pub field_values: Vec<(String, Bytes)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HGetCommand {
+    pub key: Arc<String>,
+    pub field: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HDelCommand {
+    pub key: Arc<String>,
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,11 +116,14 @@ impl Command {
     /// 这是分片锁分配的唯一权威来源。
     pub fn lock_spec(&self) -> LockSpec<'_> {
         match self {
-            Command::Set(c)         => LockSpec::Write(&c.key),
-            Command::Get(c)         => LockSpec::Read(&c.key),
-            Command::LPush(c)       => LockSpec::Write(&c.key),
-            Command::LPop(c)        => LockSpec::Write(&c.key),
-            Command::Ping(_)        => LockSpec::None,
+            Command::Set(c) => LockSpec::Write(&c.key),
+            Command::Get(c) => LockSpec::Read(&c.key),
+            Command::LPush(c) => LockSpec::Write(&c.key),
+            Command::LPop(c) => LockSpec::Write(&c.key),
+            Command::HSet(c) => LockSpec::Write(&c.key),
+            Command::HGet(c) => LockSpec::Read(&c.key),
+            Command::HDel(c) => LockSpec::Write(&c.key),
+            Command::Ping(_) => LockSpec::None,
             Command::Unimplement(_) => LockSpec::None,
             Command::EvalCommand(_) => LockSpec::None,
         }

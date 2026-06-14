@@ -2,7 +2,7 @@ use crate::command_exchange::CommandExchange;
 use crate::error::KvError::ProtocolError;
 use crate::error::{
     Command, EvalCommand, Frame, GetCommand, KvError, PingCommand, SetCommand, UnimplementCommand,
-    LPushCommand, LPopCommand,
+    LPushCommand, LPopCommand, HSetCommand, HGetCommand, HDelCommand,
 };
 
 impl TryFrom<Frame> for Command {
@@ -48,6 +48,24 @@ impl TryFrom<Frame> for Command {
                             return Err(ProtocolError("LPOP 命令需要 1 个参数".into()));
                         }
                         LPopCommand::exchange(iter, command_name)
+                    }
+                    "HSET" => {
+                        if length < 4 || length % 2 != 0 {
+                            return Err(ProtocolError("HSET 命令参数错误".into()));
+                        }
+                        HSetCommand::exchange(iter, command_name)
+                    }
+                    "HGET" => {
+                        if length != 3 {
+                            return Err(ProtocolError("HGET 命令需要 2 个参数".into()));
+                        }
+                        HGetCommand::exchange(iter, command_name)
+                    }
+                    "HDEL" => {
+                        if length < 3 {
+                            return Err(ProtocolError("HDEL 命令需要至少 2 个参数".into()));
+                        }
+                        HDelCommand::exchange(iter, command_name)
                     }
                     "PING" => PingCommand::exchange(iter, command_name),
                     //lua 脚本
