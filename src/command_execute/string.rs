@@ -93,3 +93,38 @@ impl CommandExecutor for MSetCommand {
         Ok(Frame::Simple("OK".to_string()))
     }
 }
+
+use crate::domain::MGetCommand;
+
+impl CommandExecutor for MGetCommand {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
+        let mut results = Vec::new();
+        // MGET 不需要提前排序防死锁，因为读锁允许并发读取，
+        // 且按给定顺序返回结果是必须的，不需要 sort_by 改变顺序。
+
+        for key in &self.keys {
+            let mut own_lock;
+            let mut sessions_guard;
+            let map = get_read_lock!(ctx, key, own_lock, sessions_guard);
+            let value = map.select(key).await;
+            
+            let frame = match value {
+                Some(entry) => {
+                    let data = entry.data.clone();
+                    match data {
+                        Value::Simple(Element::String(bytes)) => Frame::Bulk(bytes),
+                        Value::Simple(Element::Int(i)) => {
+                            let bytes = parse_int_from_bytes(i);
+                            Frame::Bulk(Bytes::from(bytes))
+                        }
+                        _ => Frame::Null, // MGET 获取非字符串类型时返回 Null
+                    }
+                }
+                None => Frame::Null,
+            };
+            results.push(frame);
+        }
+
+        Ok(Frame::Array(results))
+    }
+}

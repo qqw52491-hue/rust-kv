@@ -88,6 +88,7 @@ impl CommandExchange for GetCommand {
 }
 
 use crate::domain::MSetCommand;
+use crate::domain::MGetCommand;
 
 impl CommandExchange for MSetCommand {
     fn exchange(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
@@ -103,5 +104,18 @@ impl CommandExchange for MSetCommand {
             return Err(KvError::ProtocolError("mset 参数错误".into()));
         }
         Ok(Command::MSet(MSetCommand { keys_and_values }))
+    }
+}
+
+impl CommandExchange for MGetCommand {
+    fn exchange(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
+        let mut keys = Vec::new();
+        while let Ok(key) = extract_bulk_string(itor.next()) {
+            keys.push(Arc::new(key));
+        }
+        if keys.is_empty() {
+            return Err(KvError::ProtocolError("mget 参数错误".into()));
+        }
+        Ok(Command::MGet(MGetCommand { keys }))
     }
 }

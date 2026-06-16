@@ -5,6 +5,7 @@ use crate::error::{
     LPushCommand, LPopCommand, HSetCommand, HGetCommand, HDelCommand,
 };
 use crate::domain::MSetCommand;
+use crate::domain::MGetCommand;
 
 impl TryFrom<Frame> for Command {
     type Error = KvError;
@@ -43,6 +44,12 @@ impl TryFrom<Frame> for Command {
                             return Err(ProtocolError("MSET 命令参数错误".into()));
                         }
                         MSetCommand::exchange(iter, command_name)
+                    }
+                    "MGET" => {
+                        if length < 2 {
+                            return Err(ProtocolError("MGET 命令至少需要 1 个参数".into()));
+                        }
+                        MGetCommand::exchange(iter, command_name)
                     }
                     "LPUSH" => {
                         if length < 3 {

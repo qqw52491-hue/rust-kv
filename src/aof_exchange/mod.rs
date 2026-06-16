@@ -35,6 +35,7 @@ impl Command {
             | Command::HGet(_)
             | Command::Ping(_)
             | Command::Unimplement(_)
+            | Command::MGet(_)
             | Command::EvalCommand(_) => {}
             Command::MSet(c) => c.execute_aof(ctx).await,
         }
