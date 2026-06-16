@@ -5,41 +5,70 @@ use itoa::Buffer;
 use crate::{
     context::ConnectionContent, core_time::get_cached_time_ms, db::{Db, LockedDb}, error::{Frame, KvError}
 };
+use std::sync::Arc;
+
+#[macro_export]
+macro_rules! get_write_lock {
+    ($ctx:expr, $key:expr, $own_lock:ident, $sessions_guard:ident) => {
+        match &$ctx.lua_sessions {
+            Some(sessions) => {
+                let shard_index = crate::db::eviction::MemoryCache::get_shard_index($key);
+                $sessions_guard = sessions.lock().await;
+                match $sessions_guard.get_mut(&shard_index).unwrap() {
+                    crate::db::LockedDb::Write(map) => map,
+                    _ => panic!("Expected write lock in lua sessions"),
+                }
+            }
+            None => {
+                $own_lock = $ctx.db.as_ref().unwrap().store.lock_write($key).await;
+                match &mut $own_lock {
+                    crate::db::LockedDb::Write(map) => map,
+                    _ => panic!("Expected write lock"),
+                }
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! get_read_lock {
+    ($ctx:expr, $key:expr, $own_lock:ident, $sessions_guard:ident) => {
+        match &$ctx.lua_sessions {
+            Some(sessions) => {
+                let shard_index = crate::db::eviction::MemoryCache::get_shard_index($key);
+                $sessions_guard = sessions.lock().await;
+                match $sessions_guard.get_mut(&shard_index).unwrap() {
+                    crate::db::LockedDb::Read(map) | crate::db::LockedDb::Write(map) => map,
+                }
+            }
+            None => {
+                $own_lock = $ctx.db.as_ref().unwrap().store.lock_read($key).await;
+                match &mut $own_lock {
+                    crate::db::LockedDb::Read(map) => map,
+                    _ => panic!("Expected read lock"),
+                }
+            }
+        }
+    };
+}
+
  mod common;
  mod string;
  mod list;
 mod hash;
- #[derive(Clone)]
+
+#[derive(Clone)]
 pub struct CommandContext {
     pub db: Option<Db>,
-    pub connect_content: Option<ConnectionContent>
-    
+    pub connect_content: Option<ConnectionContent>,
+    pub lua_sessions: Option<Arc<tokio::sync::Mutex<std::collections::HashMap<usize, LockedDb>>>>,
 }
 
 pub trait CommandExecutor {
-      // 模板方法
     fn execute(
         &self,
-        // ✅ 核心改动：从 &mut CommandContext 变成了 &CommandContext
-        ctx:  CommandContext,
-        db_lock: Option<& mut LockedDb>
+        ctx: CommandContext,
     ) -> impl std::future::Future<Output = Result<Frame, KvError>> + Send ;
-
-    // “原语”方法
-    // async fn execute_data_resolve<'ctx>(
-    //     &self,
-    //     // ✅ 同步修改
-    //     ctx: &'ctx CommandContext<'ctx>,
-    // ) -> Result<Frame, KvError>;
-
-    // // “钩子”方法
-    // async fn execute_db<'ctx>(
-    //     &self,
-    //     // ✅ 同步修改
-    //     ctx: &'ctx CommandContext<'ctx>,
-    // ) -> Result<Frame, KvError> {
-    //     Ok(Frame::Simple("OK".to_string()))
-    // }
 }
 // 修正后的方法，返回一个可以存储的u64相对时间戳
 pub fn calculate_expiration_timestamp_ms(expiration: &crate::error::Expiration) -> u64 {

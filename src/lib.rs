@@ -188,7 +188,6 @@ mod tests {
     use super::*;
     use crate::db::Db;
     use crate::error::{Command, Frame};
-    use crate::core_execute::get_command_lock;
     use crate::command_execute::{CommandContext, CommandExecutor};
     use crate::context::{CONN_STATE, ConnectionState};
     use bytes::Bytes;
@@ -214,19 +213,18 @@ mod tests {
             
             let lpush_cmd = Command::try_from(lpush_frame).expect("解析 LPUSH 命令失败");
             
-            // 3. 获取锁并执行 LPUSH
-            let mut lock = get_command_lock(&lpush_cmd, &db).await;
+            // 3. 执行 LPUSH
             let ctx = CommandContext {
                 db: Some(db.clone()),
                 connect_content: None,
+                lua_sessions: None,
             };
-            let lpush_resp = lpush_cmd.execute(ctx, lock.as_mut())
+            let lpush_resp = lpush_cmd.execute(ctx)
                 .await
                 .expect("LPUSH 执行失败");
                 
             // LPUSH 放入 2 个值后应该返回列表长度 2
             assert_eq!(lpush_resp, Frame::Integer(2));
-            drop(lock);
             
             // 4. 模拟客户端发送的 LPOP 动作
             let lpop_frame = Frame::Array(vec![
@@ -235,44 +233,41 @@ mod tests {
             ]);
             let lpop_cmd = Command::try_from(lpop_frame).expect("解析 LPOP 命令失败");
             
-            // 5. 获取锁并执行第一弹 LPOP
+            // 5. 执行第一弹 LPOP
             // 因为 LPUSH 是从前部推入 (push_front) 元素，推入顺序是 "val1" 然后 "val2"
             // 最终列表状态应为: ["val2", "val1"]
             // 所以第一个 LPOP 出来的应该是 "val2"
-            let mut lock = get_command_lock(&lpop_cmd, &db).await;
             let ctx1 = CommandContext {
                 db: Some(db.clone()),
                 connect_content: None,
+                lua_sessions: None,
             };
-            let lpop_resp1 = lpop_cmd.execute(ctx1, lock.as_mut())
+            let lpop_resp1 = lpop_cmd.execute(ctx1)
                 .await
                 .expect("LPOP 1 执行失败");
             assert_eq!(lpop_resp1, Frame::Bulk(Bytes::from("val2")));
-            drop(lock);
             
             // 6. 执行 second LPOP
-            let mut lock = get_command_lock(&lpop_cmd, &db).await;
             let ctx2 = CommandContext {
                 db: Some(db.clone()),
                 connect_content: None,
+                lua_sessions: None,
             };
-            let lpop_resp2 = lpop_cmd.execute(ctx2, lock.as_mut())
+            let lpop_resp2 = lpop_cmd.execute(ctx2)
                 .await
                 .expect("LPOP 2 执行失败");
             assert_eq!(lpop_resp2, Frame::Bulk(Bytes::from("val1")));
-            drop(lock);
             
             // 7. 执行第三弹 LPOP (列表空，应该返回 Null)
-            let mut lock = get_command_lock(&lpop_cmd, &db).await;
             let ctx3 = CommandContext {
                 db: Some(db.clone()),
                 connect_content: None,
+                lua_sessions: None,
             };
-            let lpop_resp3 = lpop_cmd.execute(ctx3, lock.as_mut())
+            let lpop_resp3 = lpop_cmd.execute(ctx3)
                 .await
                 .expect("LPOP 3 执行失败");
             assert_eq!(lpop_resp3, Frame::Null);
-            drop(lock);
         }).await;
     }
 
@@ -296,11 +291,9 @@ mod tests {
                 Frame::Bulk(Bytes::from("val2")),
             ]);
             let hset_cmd = Command::try_from(hset_frame).expect("HSET parse fail");
-            let mut lock = get_command_lock(&hset_cmd, &db).await;
-            let ctx = CommandContext { db: Some(db.clone()), connect_content: None };
-            let hset_resp = hset_cmd.execute(ctx, lock.as_mut()).await.expect("HSET exec fail");
+            let ctx = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let hset_resp = hset_cmd.execute(ctx).await.expect("HSET exec fail");
             assert_eq!(hset_resp, Frame::Integer(2));
-            drop(lock);
 
             // 2. HGET myhash field1
             let hget_frame = Frame::Array(vec![
@@ -309,11 +302,9 @@ mod tests {
                 Frame::Bulk(Bytes::from("field1")),
             ]);
             let hget_cmd = Command::try_from(hget_frame.clone()).expect("HGET parse fail");
-            let mut lock = get_command_lock(&hget_cmd, &db).await;
-            let ctx2 = CommandContext { db: Some(db.clone()), connect_content: None };
-            let hget_resp = hget_cmd.execute(ctx2, lock.as_mut()).await.expect("HGET exec fail");
+            let ctx2 = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let hget_resp = hget_cmd.execute(ctx2).await.expect("HGET exec fail");
             assert_eq!(hget_resp, Frame::Bulk(Bytes::from("val1")));
-            drop(lock);
 
             // 3. HDEL myhash field1 field2
             let hdel_frame = Frame::Array(vec![
@@ -323,19 +314,15 @@ mod tests {
                 Frame::Bulk(Bytes::from("field2")),
             ]);
             let hdel_cmd = Command::try_from(hdel_frame).expect("HDEL parse fail");
-            let mut lock = get_command_lock(&hdel_cmd, &db).await;
-            let ctx3 = CommandContext { db: Some(db.clone()), connect_content: None };
-            let hdel_resp = hdel_cmd.execute(ctx3, lock.as_mut()).await.expect("HDEL exec fail");
+            let ctx3 = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let hdel_resp = hdel_cmd.execute(ctx3).await.expect("HDEL exec fail");
             assert_eq!(hdel_resp, Frame::Integer(2));
-            drop(lock);
 
             // 4. HGET myhash field1 again (should be null)
             let hget_cmd2 = Command::try_from(hget_frame).expect("HGET parse fail 2");
-            let mut lock = get_command_lock(&hget_cmd2, &db).await;
-            let ctx4 = CommandContext { db: Some(db.clone()), connect_content: None };
-            let hget_resp2 = hget_cmd2.execute(ctx4, lock.as_mut()).await.expect("HGET exec fail 2");
+            let ctx4 = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let hget_resp2 = hget_cmd2.execute(ctx4).await.expect("HGET exec fail 2");
             assert_eq!(hget_resp2, Frame::Null);
-            drop(lock);
         }).await;
     }
 }

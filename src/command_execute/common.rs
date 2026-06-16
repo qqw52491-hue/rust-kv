@@ -12,7 +12,6 @@ impl CommandExecutor for PingCommand {
     async fn execute(
         &self,
         _ctx: CommandContext,
-        db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
         if let Some(value) = &self.value {
             Ok(Frame::Bulk(Bytes::from(value.clone())))
@@ -25,9 +24,7 @@ impl CommandExecutor for PingCommand {
 impl CommandExecutor for UnimplementCommand {
     async fn execute(
         &self,
-        // 2. 将这个生命周期 'ctx 应用到 CommandContext 的引用上
         _ctx: CommandContext,
-        db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
         Ok(Frame::Error(format!(
             "ERR unknown command '{}'",
@@ -43,7 +40,6 @@ impl CommandExecutor for EvalCommand {
     async fn execute(
         &self,
         ctx: CommandContext,
-        _db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
         //   let result =   self.lua_vm_redis_call(
         // CommandContext {

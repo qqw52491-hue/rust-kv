@@ -108,31 +108,15 @@ pub async fn general_lua() -> Result<Lua, KvError> {
                     let command = Command::try_from(Frame::Array(frames))
                         .map_err(|e| mlua::Error::runtime("redis.call 之后进行类型转换"))?;
 
-                    if let Some(key) = command.get_key() {
-                        let shard_index = MemoryCache::get_shard_index(key);
-                        let sessions = sessions;
-                        let mut lock = sessions.lock().await;
-                        let lock = lock.get_mut(&shard_index);
-
-                        // 执行层代码复用
-                        // 修正点：
-                        // 1. 去掉了闭包里多余的 `->`
-                        // 2. 修正了末尾的括号数量
-                        // 3. 这一行应该是作为返回值，所以去掉了 let frame = (或者是你确实需要赋值，看下文逻辑)
-                        // 这里假设你是想返回 execute_command_hook 的结果：
-                        let ctx = CommandContext {
-                            db: db_clone,
-                            connect_content: content,
-                        };
-                        let frame = command.execute(ctx, lock)
-                            .await
-                            .map_err(|_| mlua::Error::runtime("lua 脚本内部命令执行失败"))
-                            .unwrap();
-                        Ok(frame)
-                    } else {
-                        // 修正点：加上了 missing 的 else
-                        Err(mlua::Error::runtime("lua 脚本内部未知错误"))
-                    }
+                    let ctx = CommandContext {
+                        db: db_clone,
+                        connect_content: content,
+                        lua_sessions: Some(sessions.clone()),
+                    };
+                    let frame = command.execute(ctx)
+                        .await
+                        .map_err(|e| mlua::Error::runtime(format!("lua 脚本内部命令执行失败: {:?}", e)))?;
+                    Ok(frame)
                 }
             },
         )

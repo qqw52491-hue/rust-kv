@@ -10,28 +10,28 @@ pub async fn execute_command(command: Command, db: &Db) -> Result<Frame, KvError
     let ctx = CommandContext {
         db: Some(db.clone()),
         connect_content: None,
+        lua_sessions: None,
     };
-    command.execute(ctx, None).await
+    command.execute(ctx).await
+}
+
+macro_rules! delegate_execute {
+    ($self:expr, $ctx:expr, [ $($variant:ident),+ $(,)? ]) => {
+        match $self {
+            $( Command::$variant(c) => c.execute($ctx).await, )+
+        }
+    };
 }
 
 impl CommandExecutor for Command {
     async fn execute(
         &self,
         ctx: CommandContext,
-        db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
-        match self {
-            Command::Get(c) => c.execute(ctx, db_lock).await,
-            Command::Set(c) => c.execute(ctx, db_lock).await,
-            Command::Ping(c) => c.execute(ctx, db_lock).await,
-            Command::Unimplement(c) => c.execute(ctx, db_lock).await,
-            Command::EvalCommand(c) => c.execute(ctx, db_lock).await,
-            Command::LPush(c) => c.execute(ctx, db_lock).await,
-            Command::LPop(c) => c.execute(ctx, db_lock).await,
-            Command::HSet(c) => c.execute(ctx, db_lock).await,
-            Command::HGet(c) => c.execute(ctx, db_lock).await,
-            Command::HDel(c) => c.execute(ctx, db_lock).await,
-        }
+        delegate_execute!(self, ctx, [
+            Get, Set, Ping, Unimplement, EvalCommand,
+            LPush, LPop, HSet, HGet, HDel
+        ])
     }
 }
 
@@ -40,15 +40,13 @@ pub async fn execute_command_normal(
     db: &Db,
     connect_content: ConnectionContent,
 ) -> Result<Frame, KvError> {
-    //这里已经是脱离所有权了 开始独立拿出来用了
-    let mut lock = get_command_lock(&command, db).await;
-    
     let ctx = CommandContext {
         db: Some(db.clone()),
         connect_content: Some(connect_content.clone()),
+        lua_sessions: None,
     };
     
-    let frame: Frame = command.execute(ctx, lock.as_mut()).await?;
+    let frame: Frame = command.execute(ctx).await?;
     
     //在这里同意执行aof 正常情况下的限定执行
     command
@@ -59,14 +57,6 @@ pub async fn execute_command_normal(
         .await;
         
     Ok(frame)
-}
-
-pub async fn get_command_lock<'a>(command: &Command, db: &'a Db) -> Option<LockedDb> {
-    match command.lock_spec() {
-        LockSpec::Write(key) => Some(db.store.lock_write(key).await.into()),
-        LockSpec::Read(key) => Some(db.store.lock_read(key).await.into()),
-        LockSpec::None => None,
-    }
 }
 
 impl Frame {
