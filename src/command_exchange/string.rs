@@ -85,5 +85,23 @@ impl CommandExchange for GetCommand {
         let key = extract_bulk_string(itor.next())?;
         Ok(Command::Get(GetCommand { key :Arc::new(key) }))
     }
-    
+}
+
+use crate::domain::MSetCommand;
+
+impl CommandExchange for MSetCommand {
+    fn exchange(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
+        let mut keys_and_values = Vec::new();
+        while let Ok(key) = extract_bulk_string(itor.next()) {
+            if let Ok(value) = extract_bulk_bytes(itor.next()) {
+                keys_and_values.push((Arc::new(key), value));
+            } else {
+                return Err(KvError::ProtocolError("mset value 缺失".into()));
+            }
+        }
+        if keys_and_values.is_empty() {
+            return Err(KvError::ProtocolError("mset 参数错误".into()));
+        }
+        Ok(Command::MSet(MSetCommand { keys_and_values }))
+    }
 }

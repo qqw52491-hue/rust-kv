@@ -4,6 +4,7 @@ use crate::error::{
     Command, EvalCommand, Frame, GetCommand, KvError, PingCommand, SetCommand, UnimplementCommand,
     LPushCommand, LPopCommand, HSetCommand, HGetCommand, HDelCommand,
 };
+use crate::domain::MSetCommand;
 
 impl TryFrom<Frame> for Command {
     type Error = KvError;
@@ -36,6 +37,12 @@ impl TryFrom<Frame> for Command {
                             return Err(ProtocolError("frame is too short".into()));
                         }
                         SetCommand::exchange(iter, command_name)
+                    }
+                    "MSET" => {
+                        if length < 3 || length % 2 == 0 {
+                            return Err(ProtocolError("MSET 命令参数错误".into()));
+                        }
+                        MSetCommand::exchange(iter, command_name)
                     }
                     "LPUSH" => {
                         if length < 3 {

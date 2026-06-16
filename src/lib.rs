@@ -325,4 +325,48 @@ mod tests {
             assert_eq!(hget_resp2, Frame::Null);
         }).await;
     }
+    #[tokio::test]
+    async fn test_mset_mget() {
+        let initial_state = ConnectionState {
+            selected_db: 0,
+            client_address: None,
+        };
+
+        CONN_STATE.scope(initial_state, async {
+            let db = Db::new(&crate::config::EvictionType::LRU);
+            
+            // 1. MSET key1 val1 key2 val2
+            let mset_frame = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("MSET")),
+                Frame::Bulk(Bytes::from("key1")),
+                Frame::Bulk(Bytes::from("val1")),
+                Frame::Bulk(Bytes::from("key2")),
+                Frame::Bulk(Bytes::from("val2")),
+            ]);
+            let mset_cmd = Command::try_from(mset_frame).expect("MSET parse fail");
+            let ctx = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let mset_resp = mset_cmd.execute(ctx).await.expect("MSET exec fail");
+            assert_eq!(mset_resp, Frame::Simple("OK".to_string()));
+
+            // 2. GET key1
+            let get_frame1 = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("GET")),
+                Frame::Bulk(Bytes::from("key1")),
+            ]);
+            let get_cmd1 = Command::try_from(get_frame1).expect("GET parse fail");
+            let ctx2 = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let get_resp1 = get_cmd1.execute(ctx2).await.expect("GET exec fail");
+            assert_eq!(get_resp1, Frame::Bulk(Bytes::from("val1")));
+
+            // 3. GET key2
+            let get_frame2 = Frame::Array(vec![
+                Frame::Bulk(Bytes::from("GET")),
+                Frame::Bulk(Bytes::from("key2")),
+            ]);
+            let get_cmd2 = Command::try_from(get_frame2).expect("GET parse fail 2");
+            let ctx3 = CommandContext { db: Some(db.clone()), connect_content: None, lua_sessions: None };
+            let get_resp2 = get_cmd2.execute(ctx3).await.expect("GET exec fail 2");
+            assert_eq!(get_resp2, Frame::Bulk(Bytes::from("val2")));
+        }).await;
+    }
 }

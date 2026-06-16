@@ -16,6 +16,7 @@ pub enum Command {
     HSet(HSetCommand),
     HGet(HGetCommand),
     HDel(HDelCommand),
+    MSet(MSetCommand),
 }
 
 // ─────────────────────────────────────────────
@@ -28,6 +29,11 @@ pub struct SetCommand {
     pub value: Bytes,
     pub expiration: Option<Expiration>,
     pub condition: Option<SetCondition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MSetCommand {
+    pub keys_and_values: Vec<(Arc<String>, Bytes)>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +129,7 @@ impl Command {
             Command::HSet(c) => LockSpec::Write(&c.key),
             Command::HGet(c) => LockSpec::Read(&c.key),
             Command::HDel(c) => LockSpec::Write(&c.key),
+            Command::MSet(_) => LockSpec::None,
             Command::Ping(_) => LockSpec::None,
             Command::Unimplement(_) => LockSpec::None,
             Command::EvalCommand(_) => LockSpec::None,

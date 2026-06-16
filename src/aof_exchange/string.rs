@@ -45,3 +45,18 @@ impl CommandAofExchange for SetCommand {
         ()
     }
 }
+
+use crate::domain::MSetCommand;
+
+impl CommandAofExchange for MSetCommand {
+    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) {
+        let mut frame_vec = vec![crate::error::Frame::Bulk(Bytes::from("MSET".to_string()))];
+        for (key, val) in &self.keys_and_values {
+            frame_vec.push(crate::error::Frame::Bulk(Bytes::from(key.as_str().to_string())));
+            frame_vec.push(crate::error::Frame::Bulk(val.clone()));
+        }
+        if let Err(e) = ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await {
+            eprintln!("发送AOF消息失败: {}", e);
+        };
+    }
+}

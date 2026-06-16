@@ -67,3 +67,29 @@ impl CommandExecutor for GetCommand {
         }
     }
 }
+
+use crate::domain::MSetCommand;
+
+impl CommandExecutor for MSetCommand {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
+        let mut sorted_pairs = self.keys_and_values.clone();
+        // 按照 shard_index 以及 key 排序，防止死锁
+        // 但为了简单和演示，我们直接按 key 的字典序排
+        sorted_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (key, val) in &sorted_pairs {
+            let mut own_lock;
+            let mut sessions_guard;
+            let map = get_write_lock!(ctx, key, own_lock, sessions_guard);
+            
+            let value_entry = match bytes_to_i64_fast(val) {
+                Some(i) => ValueEntry::new(Value::Simple(Element::Int(i)), None),
+                None => ValueEntry::new(Value::Simple(Element::String(val.clone())), None),
+            };
+            
+            map.insert(key.clone(), value_entry).await;
+        }
+
+        Ok(Frame::Simple("OK".to_string()))
+    }
+}
