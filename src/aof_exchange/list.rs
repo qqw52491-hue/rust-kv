@@ -8,15 +8,14 @@ impl CommandAofExchange for LPushCommand {
     async fn execute_aof<'a>(
         &self,
         ctx: AofContent<'a>,
-    ) {
-        let mut frame_vec = vec![Frame::Bulk(Bytes::from("LPUSH".to_string()))];
-        frame_vec.push(Frame::Bulk(Bytes::from(self.key.to_string())));
+    ) -> Result<(), String> {
+        let mut frame_vec = vec![Frame::Bulk(Bytes::from_static(b"LPUSH"))];
+        frame_vec.push(Frame::Bulk(Bytes::copy_from_slice(self.key.as_bytes())));
         for val in &self.values {
             frame_vec.push(Frame::Bulk(val.clone()));
         }
-        if let Err(e) = ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await {
-            eprintln!("发送AOF消息失败: {}", e);
-        }
+        ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await
+            .map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }
 
@@ -24,11 +23,10 @@ impl CommandAofExchange for LPopCommand {
     async fn execute_aof<'a>(
         &self,
         ctx: AofContent<'a>,
-    ) {
-        let mut frame_vec = vec![Frame::Bulk(Bytes::from("LPOP".to_string()))];
-        frame_vec.push(Frame::Bulk(Bytes::from(self.key.to_string())));
-        if let Err(e) = ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await {
-            eprintln!("发送AOF消息失败: {}", e);
-        }
+    ) -> Result<(), String> {
+        let mut frame_vec = vec![Frame::Bulk(Bytes::from_static(b"LPOP"))];
+        frame_vec.push(Frame::Bulk(Bytes::copy_from_slice(self.key.as_bytes())));
+        ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await
+            .map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }

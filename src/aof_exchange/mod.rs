@@ -15,7 +15,7 @@ pub trait CommandAofExchange {
         &self,
         // 2. 将这个生命周期 'ctx 应用到 CommandContext 的引用上
         ctx: AofContent<'a>,
-    );
+    ) -> Result<(), String>;
 }
 
 /*
@@ -24,7 +24,7 @@ pub trait CommandAofExchange {
 所以一个模块是功能性划分 结构是实体划分 承载结构
 */
 impl Command {
-    pub async fn exe_aof_command<'a>(&self, ctx: AofContent<'a>) {
+    pub async fn exe_aof_command<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         match self {
             Command::Set(set_command) => set_command.execute_aof(ctx).await,
             Command::LPush(lpush_command) => lpush_command.execute_aof(ctx).await,
@@ -36,7 +36,7 @@ impl Command {
             | Command::Ping(_)
             | Command::Unimplement(_)
             | Command::MGet(_)
-            | Command::EvalCommand(_) => {}
+            | Command::EvalCommand(_) => Ok(()),
             Command::MSet(c) => c.execute_aof(ctx).await,
         }
     }

@@ -2,7 +2,7 @@ use crate::aof_exchange::{AofContent, CommandAofExchange};
 use crate::domain::{HSetCommand, HDelCommand};
 
 impl CommandAofExchange for HSetCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) {
+    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let mut buf = Vec::new();
         // * (1 + 1 + field_values.len() * 2)
         let total_parts = 2 + self.field_values.len() * 2;
@@ -19,12 +19,12 @@ impl CommandAofExchange for HSetCommand {
             buf.extend_from_slice(val);
             buf.extend_from_slice(b"\r\n");
         }
-        let _ = ctx.aof_tx.send(buf).await;
+        ctx.aof_tx.send(buf).await.map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }
 
 impl CommandAofExchange for HDelCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) {
+    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let mut buf = Vec::new();
         // * (1 + 1 + fields.len())
         let total_parts = 2 + self.fields.len();
@@ -37,6 +37,6 @@ impl CommandAofExchange for HDelCommand {
             buf.extend_from_slice(field.as_bytes());
             buf.extend_from_slice(b"\r\n");
         }
-        let _ = ctx.aof_tx.send(buf).await;
+        ctx.aof_tx.send(buf).await.map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }

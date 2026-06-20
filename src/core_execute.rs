@@ -49,12 +49,15 @@ pub async fn execute_command_normal(
     let frame: Frame = command.execute(ctx).await?;
     
     //在这里同意执行aof 正常情况下的限定执行
-    command
+    if let Err(e) = command
         .exe_aof_command(AofContent {
             aof_tx: &connect_content.aof_tx,
             shutdown_tx: &connect_content.shutdown_tx,
         })
-        .await;
+        .await
+    {
+        eprintln!("AOF Append Failed: {}", e);
+    }
         
     Ok(frame)
 }
