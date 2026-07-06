@@ -30,8 +30,14 @@ impl CommandExecutor for Command {
     ) -> Result<Frame, KvError> {
         delegate_execute!(self, ctx, [
             Get, Set, Ping, Unimplement, EvalCommand,
-            LPush, LPop, HSet, HGet, HDel, MSet, MGet
+            LPush, LPop, HSet, HGet, HDel, MSet, MGet, Multi, Exec, MultiGroup
         ])
+    }
+}
+
+impl CommandExecutor for Vec<Command> {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
+        Ok(Frame::Null)
     }
 }
 
@@ -47,17 +53,6 @@ pub async fn execute_command_normal(
     };
     
     let frame: Frame = command.execute(ctx).await?;
-    
-    //在这里同意执行aof 正常情况下的限定执行
-    if let Err(e) = command
-        .exe_aof_command(AofContent {
-            aof_tx: &connect_content.aof_tx,
-            shutdown_tx: &connect_content.shutdown_tx,
-        })
-        .await
-    {
-        eprintln!("AOF Append Failed: {}", e);
-    }
         
     Ok(frame)
 }

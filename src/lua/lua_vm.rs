@@ -39,6 +39,18 @@ impl EvalCommand {
         let mut entry = sessions.lock().await;
         //如果没有问题就提交
         if final_result.is_ok() {
+            // 【新增】在提交内存前，把所有成功的命令一起写入 AOF
+            let (buffer, ctx) = CURRENT_ENV.with(|cell| {
+                let mut borrow = cell.borrow_mut();
+                let env = borrow.as_mut().unwrap();
+                (std::mem::take(&mut env.lua_aof_buffer), env.ctx.clone())
+            });
+
+            if !buffer.is_empty() {
+                let multi_group = crate::error::Command::MultiGroup(buffer);
+                ctx.send_aof(&multi_group).await;
+            }
+
             //拿出arc 的所有权 并且全部提交
             for (_size, lock) in entry.drain() {
                 if let LockedDb::Write(lock_mut) = lock {
@@ -110,12 +122,20 @@ pub async fn general_lua() -> Result<Lua, KvError> {
 
                     let ctx = CommandContext {
                         db: db_clone,
-                        connect_content: content,
+                        connect_content: None, // 【绝杀点】禁止 Lua 内部命令在执行时直接发 AOF！
                         lua_sessions: Some(sessions.clone()),
                     };
                     let frame = command.execute(ctx)
                         .await
                         .map_err(|e| mlua::Error::runtime(format!("lua 脚本内部命令执行失败: {:?}", e)))?;
+                    
+                    // 【追加】如果命令执行成功，把它塞进环境的 buffer 里
+                    CURRENT_ENV.with(|cell| {
+                        if let Some(env) = cell.borrow_mut().as_mut() {
+                            env.lua_aof_buffer.push(command);
+                        }
+                    });
+
                     Ok(frame)
                 }
             },
@@ -187,7 +207,8 @@ pub async fn init_lua_pre(
         let env = CurrentRequestEnv {
             ctx: command_content,
             sessions,
-            command:command.clone()
+            command: command.clone(),
+            lua_aof_buffer: Vec::new(),
         };
 
         // 这一步非常快，不存在阻塞

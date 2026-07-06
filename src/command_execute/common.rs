@@ -4,7 +4,7 @@ use crate::{
     command_execute::{CommandContext, CommandExecutor},
     context::{CONN_STATE, ConnectionState},
     db::LockedDb,
-    error::{EvalCommand, Frame, KvError, PingCommand, UnimplementCommand},
+    error::{EvalCommand, ExecCommand, Frame, KvError, MultiCommand, PingCommand, UnimplementCommand},
     lua::lua_work::LuaTask,
 };
 use tokio::sync::oneshot;
@@ -89,5 +89,17 @@ impl CommandExecutor for EvalCommand {
             }
         };
         result
+    }
+}
+
+impl CommandExecutor for MultiCommand {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
+        Ok(Frame::Null)
+    }
+}
+
+impl CommandExecutor for ExecCommand {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
+        Ok(Frame::Null)
     }
 }

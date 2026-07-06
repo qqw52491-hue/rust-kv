@@ -37,8 +37,52 @@ impl Command {
             | Command::Unimplement(_)
             | Command::MGet(_)
             | Command::EvalCommand(_) => Ok(()),
+            Command::Multi(c) => c.execute_aof(ctx).await,
+            Command::Exec(c) => c.execute_aof(ctx).await,
+            Command::MultiGroup(cmds) => {
+                let mut buf = Frame::Array(vec![Frame::Bulk(Bytes::from("MULTI"))]).serialize();
+                let (dummy_tx, mut dummy_rx) = tokio::sync::mpsc::channel(100);
+                let (dummy_shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+                for cmd in cmds {
+                    let dummy_ctx = AofContent {
+                        aof_tx: &dummy_tx,
+                        shutdown_tx: &dummy_shutdown_tx,
+                    };
+                    let _ = match cmd {
+                        Command::Set(c) => c.execute_aof(dummy_ctx).await,
+                        Command::LPush(c) => c.execute_aof(dummy_ctx).await,
+                        Command::LPop(c) => c.execute_aof(dummy_ctx).await,
+                        Command::HSet(c) => c.execute_aof(dummy_ctx).await,
+                        Command::HDel(c) => c.execute_aof(dummy_ctx).await,
+                        Command::MSet(c) => c.execute_aof(dummy_ctx).await,
+                        _ => Ok(()),
+                    };
+                    while let Ok(msg) = dummy_rx.try_recv() {
+                        buf.extend(msg);
+                    }
+                }
+                let exec_buf = Frame::Array(vec![Frame::Bulk(Bytes::from("EXEC"))]).serialize();
+                buf.extend(exec_buf);
+                ctx.aof_tx.send(buf).await.map_err(|e| e.to_string())
+            }
             Command::MSet(c) => c.execute_aof(ctx).await,
         }
+    }
+}
+
+use crate::error::{MultiCommand, ExecCommand, Frame};
+
+impl CommandAofExchange for MultiCommand {
+    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+        let frame = Frame::Array(vec![Frame::Bulk(Bytes::from("MULTI"))]);
+        ctx.aof_tx.send(frame.serialize()).await.map_err(|e| e.to_string())
+    }
+}
+
+impl CommandAofExchange for ExecCommand {
+    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+        let frame = Frame::Array(vec![Frame::Bulk(Bytes::from("EXEC"))]);
+        ctx.aof_tx.send(frame.serialize()).await.map_err(|e| e.to_string())
     }
 }
 

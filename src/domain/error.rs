@@ -29,6 +29,6 @@ pub enum KvError {
 // ─────────────────────────────────────────────
 pub use crate::domain::command::{
     Command, EvalCommand, Expiration, GetCommand, LPopCommand, LPushCommand, LockSpec, PingCommand,
-    SetCommand, SetCondition, UnimplementCommand, HSetCommand, HGetCommand, HDelCommand,
+    SetCommand, SetCondition, UnimplementCommand, HSetCommand, HGetCommand, HDelCommand, MSetCommand, MGetCommand, MultiCommand, ExecCommand,
 };
 pub use crate::domain::protocol::{Frame, IsAof, ToBulk};

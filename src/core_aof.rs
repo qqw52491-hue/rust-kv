@@ -114,6 +114,7 @@ pub async fn explain_execute_aofcommand(
     let mut tail_file_length = 0;
     //这个默认恢复从0 开始 
     //let mut conn_state = ConnectionState { selected_db: 0 ,client_address: None};
+    let mut transaction_buffer: Option<Vec<Command>> = None; // 【新增】事务缓冲，用于防撕裂
     loop {
         let size: usize = file.read(&mut file_data[tail_file_length..])? + tail_file_length;
         let mut tail_size: usize = 0;
@@ -133,8 +134,26 @@ pub async fn explain_execute_aofcommand(
                     //这个分支只有不可变
                     Some((frame, frame_size)) => { // 重命名为 frame_size 避免遮蔽外层的 size
                         match Command::try_from(frame) {
-                            Ok(frame) => {
-                                execute_command(frame, db).await?;
+                            Ok(cmd) => {
+                                match cmd {
+                                    Command::Multi(_) => {
+                                        transaction_buffer = Some(Vec::new());
+                                    }
+                                    Command::Exec(_) => {
+                                        if let Some(cmds) = transaction_buffer.take() {
+                                            for buffered_cmd in cmds {
+                                                execute_command(buffered_cmd, db).await?;
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        if let Some(buffer) = &mut transaction_buffer {
+                                            buffer.push(cmd);
+                                        } else {
+                                            execute_command(cmd, db).await?;
+                                        }
+                                    }
+                                }
                                 data = &data[frame_size..];
                                 exec_time += 1;
                             }
@@ -162,5 +181,13 @@ pub async fn explain_execute_aofcommand(
             }
         }
     }
+
+    
+    // 【新增】如果文件读取结束了，但 transaction_buffer 里还有东西，说明遇到了断电撕裂！
+    // 没遇到 EXEC，我们直接丢弃这批数据，完成完美回滚。
+    if let Some(unfinished) = transaction_buffer {
+        println!("警告: 发现断电撕裂导致的不完整事务！已自动回滚 {} 条未提交命令。", unfinished.len());
+    }
+
     Ok(())
 }

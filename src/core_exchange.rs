@@ -82,6 +82,8 @@ impl TryFrom<Frame> for Command {
                         HDelCommand::exchange(iter, command_name)
                     }
                     "PING" => PingCommand::exchange(iter, command_name),
+                    "MULTI" => Ok(Command::Multi(crate::domain::command::MultiCommand {})),
+                    "EXEC" => Ok(Command::Exec(crate::domain::command::ExecCommand {})),
                     //lua 脚本
                     "EVAL" => EvalCommand::exchange(iter, command_name),
 

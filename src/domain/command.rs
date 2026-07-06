@@ -18,6 +18,9 @@ pub enum Command {
     HDel(HDelCommand),
     MSet(MSetCommand),
     MGet(MGetCommand),
+    Multi(MultiCommand),
+    Exec(ExecCommand),
+    MultiGroup(Vec<Command>),
 }
 
 // ─────────────────────────────────────────────
@@ -94,6 +97,12 @@ pub struct LPopCommand {
     pub key: Arc<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MultiCommand {}
+
+#[derive(Debug, Clone)]
+pub struct ExecCommand {}
+
 // ─────────────────────────────────────────────
 // 辅助类型：SET 命令专属
 // ─────────────────────────────────────────────
@@ -140,6 +149,9 @@ impl Command {
             Command::Ping(_) => LockSpec::None,
             Command::Unimplement(_) => LockSpec::None,
             Command::EvalCommand(_) => LockSpec::None,
+            Command::Multi(_) => LockSpec::None,
+            Command::Exec(_) => LockSpec::None,
+            Command::MultiGroup(_) => LockSpec::None,
         }
     }
 

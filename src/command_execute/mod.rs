@@ -64,6 +64,23 @@ pub struct CommandContext {
     pub lua_sessions: Option<Arc<tokio::sync::Mutex<std::collections::HashMap<usize, LockedDb>>>>,
 }
 
+impl CommandContext {
+    /// 触发 AOF 日志发送。调用方需自行确保在写锁的作用域 `{ ... }` 内调用该方法。
+    pub async fn send_aof(&self, cmd: &crate::error::Command) {
+        if let Some(conn) = &self.connect_content {
+            if let Err(e) = cmd
+                .exe_aof_command(crate::aof_exchange::AofContent {
+                    aof_tx: &conn.aof_tx,
+                    shutdown_tx: &conn.shutdown_tx,
+                })
+                .await
+            {
+                eprintln!("AOF Append Failed: {}", e);
+            }
+        }
+    }
+}
+
 pub trait CommandExecutor {
     fn execute(
         &self,
