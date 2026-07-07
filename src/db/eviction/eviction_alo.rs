@@ -1,6 +1,4 @@
-use std::{
-    cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Duration, u32, usize
-};
+use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Duration, u32, usize};
 
 use rand::Rng;
 use tokio::{sync::Mutex, time::Instant};
@@ -9,7 +7,10 @@ const EVICTION_MAX_NUMBER: usize = 5;
 
 use crate::{
     core_time::get_cached_time_ms,
-    db::{Storage, eviction::{LockOwner, MemoryCache, NUM_SHARDS}},
+    db::{
+        Storage,
+        eviction::{LockOwner, MemoryCache, NUM_SHARDS},
+    },
 };
 
 impl Storage {
@@ -56,7 +57,11 @@ impl Storage {
                     active_shards.swap_remove(random_active_index);
                     continue;
                 }
-                let key = shard.get_eviction_policy().await.unwrap().get_random_sample_key().unwrap();
+                let key = shard
+                    .get_eviction_policy()
+                    .unwrap()
+                    .get_random_sample_key()
+                    .unwrap();
                 if let Some(value) = shard.select(&key).await {
                     if let Some(expire_time) = value.expires_at {
                         if get_cached_time_ms() > expire_time {
@@ -64,7 +69,7 @@ impl Storage {
                             let data_size = value.data_size;
                             shard.add_memory(data_size);
                             //调用方法删除
-                            let _ = shard.get_eviction_policy().await.unwrap().on_delete(key);
+                            let _ = shard.get_eviction_policy().unwrap().on_delete(key);
                         }
                     }
                 }
@@ -94,13 +99,13 @@ impl Storage {
 
                 }
             }
-            if Storage::get_global_memory_can_move(&self,target_memory).await {
+            if crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory {
                 //根据指标挑选前五的分片
                 let mut shard_indices: BinaryHeap<Reverse<(usize, usize, usize)>> =
                     BinaryHeap::with_capacity(EVICTION_MAX_NUMBER);
                 for db_index in 0..16 {
                     for shard_index in 0..NUM_SHARDS {
-                        let shard =  self.get_lock_read(db_index, shard_index).await;
+                        let shard = self.get_lock_read(db_index, shard_index).await;
                         let memory = shard.get_memory_usage();
                         //跳过为空的
                         if memory == 0 {
@@ -140,12 +145,17 @@ impl Storage {
                                 }
                             }
                             //再次精确判断 锁内部判断就完全没有问题了
-                            if Storage::get_global_memory_not_move(store.clone(),target_memory).await {
-                                let key = shard_lock.get_eviction_policy().await.unwrap().pop_victim();
+                            if crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory
+                            {
+                                let key =
+                                    shard_lock.get_eviction_policy().unwrap().pop_victim();
                                 if let Some(key) = key {
                                     let data_size =
                                         shard_lock.select(&key).await.unwrap().data_size;
-                                    shard_lock.get_eviction_policy().await.unwrap().on_delete(key);
+                                    shard_lock
+                                        .get_eviction_policy()
+                                        .unwrap()
+                                        .on_delete(key);
                                     //现在删除内存更新分片和全局内存数据
                                     shard_lock.sub_memory(data_size);
                                     processed_count += 1;
@@ -169,37 +179,5 @@ impl Storage {
         }
         task_vec
     }
-    //这个异步方法确实不错
-    //通过计算获取全局数据总和 
-    //锁资源一定要精确计算获取
-    pub async fn get_global_memory_can_move(&self,max_size:usize) -> bool {
-        let mut global_memory = 0;
-        //这个是通过计算每个分片获取数据
-        for db_index in 0..16 {
-            for shard_index in 0..NUM_SHARDS {
-                let shard_lock = self.get_lock_read(db_index, shard_index).await;
-                global_memory += shard_lock.as_lock_owner().unwrap().get_memory_usage();
-                if global_memory > max_size {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    //self 一定不能move 这个还是最基本的在循环里
-    pub async fn get_global_memory_not_move(store: Arc<Vec<Arc<MemoryCache>>>,max_size:usize) -> bool {
-        let mut global_memory = 0;
-        //这个是通过计算每个分片获取数据
-        for db_index in 0..16 {
-            for shard_index in 0..NUM_SHARDS {
-                let shard_lock = store[db_index].message[shard_index].clone().read_owned().await;
-                global_memory += shard_lock.get_memory_usage();
-                if global_memory > max_size {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
+    //移除了容易导致死锁的 get_global_memory_can_move 和 get_global_memory_not_move
 }

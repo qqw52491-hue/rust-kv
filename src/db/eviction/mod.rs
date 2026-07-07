@@ -11,7 +11,7 @@ use crate::{config::EvictionType, db::eviction::lru::lru_struct::LruNode, types:
 use async_trait::async_trait;
 use fxhash::FxHasher;
 use std::hash::{Hash, Hasher};
-use tokio::sync::{Mutex, MutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
+use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 pub mod eviction_alo;
 pub mod lfu;
 pub mod lru;
@@ -23,10 +23,12 @@ pub struct TtlEntry {
     key: Arc<String>,
 }
 
+pub static GLOBAL_MEMORY: AtomicUsize = AtomicUsize::new(0);
+
 pub struct MemoryCacheNode {
     pub db_store: HashMap<Arc<String>, ValueEntry>,
     pub approx_memory: AtomicUsize, // 它自己分片的账 记录具体的内存大小
-    pub evicition: Mutex<Box<dyn EvictionPolicy>>,
+    pub evicition: std::sync::Mutex<Box<dyn EvictionPolicy>>,
 }
 
 //lua 变更级数据源模拟
@@ -149,7 +151,7 @@ impl MemoryCacheNode {
         MemoryCacheNode {
             db_store: HashMap::new(),
             approx_memory: AtomicUsize::new(0),
-            evicition: Mutex::new(policy_instance),
+            evicition: std::sync::Mutex::new(policy_instance),
         }
     }
 
@@ -177,7 +179,7 @@ impl KvOperator for DirectCacheNode {
                 rw_lock_write_guard
                     .evicition
                     .lock()
-                    .await
+                    .unwrap()
                     .on_write(key.clone());
                 let size_before = match rw_lock_write_guard.db_store.get(&key) {
                     Some(entry) => entry.data_size,
@@ -196,12 +198,14 @@ impl KvOperator for DirectCacheNode {
                     rw_lock_write_guard
                         .approx_memory
                         .fetch_add(memory_differ as usize, Ordering::Relaxed);
+                    GLOBAL_MEMORY.fetch_add(memory_differ as usize, Ordering::Relaxed);
                 } else if memory_differ < 0 {
                     // 内存减少了：取绝对值（变成正数），然后减出去
                     // (-memory_differ) 就变成了正数，比如 -50 变成 50
                     rw_lock_write_guard
                         .approx_memory
                         .fetch_sub((-memory_differ) as usize, Ordering::Relaxed);
+                    GLOBAL_MEMORY.fetch_sub((-memory_differ) as usize, Ordering::Relaxed);
                 }
             }
             DirectCacheNode::Readguard(_rw_lock_read_guard) => {}
@@ -216,11 +220,12 @@ impl KvOperator for DirectCacheNode {
                     rw_lock_write_guard
                         .evicition
                         .lock()
-                        .await
+                        .unwrap()
                         .on_delete(key.clone());
                     rw_lock_write_guard
                         .approx_memory
                         .fetch_sub(value.data_size, Ordering::Relaxed);
+                    GLOBAL_MEMORY.fetch_sub(value.data_size, Ordering::Relaxed);
                 }
             }
             DirectCacheNode::Readguard(_rw_lock_read_guard) => {}
@@ -235,11 +240,12 @@ impl KvOperator for DirectCacheNode {
                     rw_lock_write_guard
                         .evicition
                         .lock()
-                        .await
+                        .unwrap()
                         .on_delete(key.clone());
                     rw_lock_write_guard
                         .approx_memory
                         .fetch_sub(value.data_size, Ordering::Relaxed);
+                    GLOBAL_MEMORY.fetch_sub(value.data_size, Ordering::Relaxed);
                     Some(value)
                 } else {
                     None
@@ -272,7 +278,7 @@ impl KvOperator for DirectCacheNode {
                 let eviction = &mut node.evicition;
 
                 // 3. 先更新 LRU (操作 eviction)
-                eviction.lock().await.on_read(key);
+                eviction.lock().unwrap().on_read(key);
 
                 // 4. 【第一查】只拿 bool 标记
                 // 这一步只借用 store 一瞬间，用完立刻释放
@@ -303,8 +309,8 @@ impl KvOperator for DirectCacheNode {
                 let eviction = &node.evicition; // 这里是 Mutex<Box<dyn Policy>>
 
                 // 2. 更新 LRU (内部可变性，微小开销)
-                // 这里的 await 只是为了拿那个极短的 Mutex，不会阻塞太久
-                eviction.lock().await.on_read(key);
+                // 这里的 Mutex 是 std::sync::Mutex，非常快
+                eviction.lock().unwrap().on_read(key);
                 // 3. 查数据
                 if let Some(value) = store.get(key) {
                     // 4. 检查过期
@@ -345,14 +351,13 @@ impl LockOwner for DirectCacheNode {
         }
     }
 
-    async fn get_eviction_policy(&self) -> Option<MutexGuard<'_, Box<dyn EvictionPolicy>>> {
+    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, Box<dyn EvictionPolicy>>> {
         match self {
             DirectCacheNode::Writeguard(rw_lock_write_guard) => {
-                let lock: tokio::sync::MutexGuard<'_, Box<dyn EvictionPolicy + 'static>> =
-                    rw_lock_write_guard.evicition.lock().await;
+                let lock = rw_lock_write_guard.evicition.lock().unwrap();
                 Some(lock)
             }
-            DirectCacheNode::Readguard(rw_lock_read_guard) => None,
+            DirectCacheNode::Readguard(_rw_lock_read_guard) => None,
         }
     }
 
@@ -362,11 +367,13 @@ impl LockOwner for DirectCacheNode {
                 rw_lock_write_guard
                     .approx_memory
                     .fetch_add(size, Ordering::Relaxed);
+                GLOBAL_MEMORY.fetch_add(size, Ordering::Relaxed);
             }
             DirectCacheNode::Readguard(rw_lock_read_guard) => {
                 rw_lock_read_guard
                     .approx_memory
                     .fetch_add(size, Ordering::Relaxed);
+                GLOBAL_MEMORY.fetch_add(size, Ordering::Relaxed);
             }
         }
     }
@@ -377,11 +384,13 @@ impl LockOwner for DirectCacheNode {
                 rw_lock_write_guard
                     .approx_memory
                     .fetch_sub(size, Ordering::Relaxed);
+                GLOBAL_MEMORY.fetch_sub(size, Ordering::Relaxed);
             }
             DirectCacheNode::Readguard(rw_lock_read_guard) => {
                 rw_lock_read_guard
                     .approx_memory
                     .fetch_sub(size, Ordering::Relaxed);
+                GLOBAL_MEMORY.fetch_sub(size, Ordering::Relaxed);
             }
         }
     }
@@ -425,7 +434,7 @@ pub trait LockOwner: KvOperator {
     fn get_memory_usage(&self) -> usize;
 
     // 2. 暴露驱逐策略 (返回引用 &dyn，而不是 Box)
-    async fn get_eviction_policy(&self) -> Option<MutexGuard<'_, Box<dyn EvictionPolicy>>>;
+    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, Box<dyn EvictionPolicy>>>;
 
     // 修改内存记账 (封装成行为更好，不要直接暴露 Atomic)
     fn add_memory(&self, size: usize);
