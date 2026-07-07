@@ -59,10 +59,10 @@ pub async fn run() {
 
     tracing_subscriber::fmt::init();
     // 1. 绑定监听地址
-    // "127.0.0.1:6379" 是 Redis 的默认端口，我们沿用它可以方便地用 `redis-cli` 测试
-    // 如果端口占用失败 直接报错退出
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
-    println!("服务器启动，监听于 127.0.0.1:6379");
+    // "0.0.0.0:6380" 允许所有网卡访问（包括 Docker 容器从内部访问宿主机）
+    // 我们将其修改为了 6380，这样你可以开启双开对比性能
+    let listener = TcpListener::bind("0.0.0.0:6380").await.unwrap();
+    println!("服务器启动，监听于 0.0.0.0:6380");
 
     //创建db
     let mut db = Db::new(&CONFIG.eviction_type);
@@ -179,8 +179,13 @@ pub async fn run() {
     };
     //暂停收尾工作
     shutdown_listener(app_shutdown_tx).await;
-    //收集关联后开启监听线程
+    // 收集关联后开启监听线程
     shutdown.shutdown().await;
+
+    // 优雅地清理 Lua Runtime（防止在 async 境下直接 drop 导致报错）
+    tokio::task::spawn_blocking(move || {
+        drop(lua_runtime);
+    }).await.unwrap();
 }
 
 #[cfg(test)]

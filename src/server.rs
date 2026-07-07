@@ -69,9 +69,14 @@ pub async fn handle_connection(
                     .await
                     {
                         Ok(result) => {
-                            //print!("{}", result.len());
+                            // 优化: 将所有响应合并到一个缓冲区，一次性发送
+                            // 避免 -P 32 管道模式下出现 32 次 write_all 带来的巨大系统调用开销
+                            let mut out_buf = bytes::BytesMut::new();
                             for item in result {
-                                socket.write_all(&item).await?;
+                                out_buf.extend_from_slice(&item);
+                            }
+                            if !out_buf.is_empty() {
+                                socket.write_all(&out_buf).await?;
                             }
                         }
                         Err(e) => {
