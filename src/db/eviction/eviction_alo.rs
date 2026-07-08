@@ -65,11 +65,8 @@ impl Storage {
                 if let Some(value) = shard.select(&key).await {
                     if let Some(expire_time) = value.expires_at {
                         if get_cached_time_ms() > expire_time {
-                            //更新分片和整体内存数据
-                            let data_size = value.data_size;
-                            shard.add_memory(data_size);
-                            //调用方法删除
-                            let _ = shard.get_eviction_policy().unwrap().on_delete(key);
+                            // 调用统一的 delete 方法，内部会处理内存和 LRU 移除
+                            shard.delete(&key).await;
                         }
                     }
                 }
@@ -90,16 +87,26 @@ impl Storage {
         //定时任务接收者
         loop {
             let mut shutdown = shutdown_clone.clone().subscribe();
-            //如果通知来了 就会下次循环会直接break
-            tokio::select! {
-                _ = shutdown.recv() =>{
-                    break;
-                },
-                _ = tokio::time::sleep(Duration::from_millis(100)) =>{
+            let is_over_memory = crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory;
+            
+            if !is_over_memory {
+                // 如果内存健康，休眠 100ms 慢慢巡逻
+                tokio::select! {
+                    _ = shutdown.recv() =>{
+                        break;
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(100)) =>{
 
+                    }
+                }
+            } else {
+                // 如果内存溢出，不要休眠！只需无阻塞检查一下是否关机，然后立刻去清理
+                if let Ok(_) = shutdown.try_recv() {
+                    break;
                 }
             }
-            if crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory {
+
+            if is_over_memory {
                 //根据指标挑选前五的分片
                 let mut shard_indices: BinaryHeap<Reverse<(usize, usize, usize)>> =
                     BinaryHeap::with_capacity(EVICTION_MAX_NUMBER);
@@ -119,61 +126,65 @@ impl Storage {
                         shard_indices.push(item_for_heap);
                     }
                 }
+                let mut handles = Vec::new();
                 for item in shard_indices {
                     //每次循环都需要克隆
                     let shutdown_clone = shutdown_tx.clone();
                     let (_, db_index, shard_index) = item.0;
-                    //先获取锁 然后执行指定的时间段
-                    let mut shard_lock = self.get_lock_read(db_index, shard_index).await;
                     let store: Arc<Vec<Arc<MemoryCache>>> = self.store.clone();
                     // 内存超了，开一个任务
                     let task_delete = tokio::spawn(async move {
-                        //let mut shard_lock = shard.await;
                         let mut processed_count = 0;
-                        //设置开始时间
                         let start_stopwatch = Instant::now();
-                        let time_budget = Duration::from_millis(10);
+                        let time_budget = Duration::from_millis(20);
                         loop {
                             let mut shutdown = shutdown_clone.clone().subscribe();
-                            //如果通知来了 就会下次循环会直接break
-                            tokio::select! {
-                                _ = shutdown.recv() =>{
-                                    break;
-                                },
-                                _ = tokio::time::sleep(Duration::from_millis(100)) =>{
-
-                                }
+                            if let Ok(_) = shutdown.try_recv() {
+                                break;
                             }
-                            //再次精确判断 锁内部判断就完全没有问题了
-                            if crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory
-                            {
-                                let key =
-                                    shard_lock.get_eviction_policy().unwrap().pop_victim();
+                            if crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) <= target_memory {
+                                break;
+                            }
+
+                            // 在循环内部获取【写锁】，这样不会长期阻塞整个分片
+                            let shard_lock_guard = store[db_index].message[shard_index].clone().write_owned().await;
+                            let mut shard_operator: Box<dyn crate::db::eviction::LockOwner> = Box::new(crate::db::eviction::DirectCacheNode::Writeguard(shard_lock_guard));
+                            
+                            let mut deleted_in_batch = 0;
+                            // 将批量删除提高到 200，减少 yield 带来的 tokio 上下文切换开销
+                            while deleted_in_batch < 200 && crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory {
+                                let key = shard_operator.get_eviction_policy().unwrap().pop_victim();
                                 if let Some(key) = key {
-                                    let data_size =
-                                        shard_lock.select(&key).await.unwrap().data_size;
-                                    shard_lock
-                                        .get_eviction_policy()
-                                        .unwrap()
-                                        .on_delete(key);
-                                    //现在删除内存更新分片和全局内存数据
-                                    shard_lock.sub_memory(data_size);
+                                    // 统一的 delete 方法会搞定 LRU 链表和内存记账
+                                    shard_operator.delete(&key).await;
+                                    deleted_in_batch += 1;
                                     processed_count += 1;
                                 } else {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
-                            //精准判断时间
-                            if processed_count % 10 == 0 {
-                                if start_stopwatch.elapsed() > time_budget {
-                                    break;
-                                }
+                            
+                            // 主动让出 CPU 给其他任务
+                            tokio::task::yield_now().await;
+
+                            if deleted_in_batch == 0 {
+                                break; // 这个分片已经没东西可删了
+                            }
+
+                            // 精准判断时间
+                            if start_stopwatch.elapsed() > time_budget {
+                                break;
                             }
                         }
                     });
-                    task_vec_clone.lock().await.push(task_delete);
+                    handles.push(task_delete);
+                }
+                
+                // 【关键修复】等待这批清理任务执行完毕！
+                // 否则如果内存没降下来，下一次 100ms 循环又会 spawn 5 个新任务
+                // 导致任务无限爆炸，最终耗尽 CPU 资源，让 SET 性能衰减到冰点
+                for handle in handles {
+                    let _ = handle.await;
                 }
             }
         }

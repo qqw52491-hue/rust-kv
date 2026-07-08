@@ -11,10 +11,7 @@ use crate::{
 };
 
 impl CommandExecutor for SetCommand {
-    async fn execute(
-        &self,
-        ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let time_expire_u64: Option<u64>;
         let time_expire = if let Some(expire) = &self.expiration {
             time_expire_u64 = Some(calculate_expiration_timestamp_ms(expire));
@@ -30,14 +27,15 @@ impl CommandExecutor for SetCommand {
                 time_expire,
             ),
         };
-        
+
         {
             let mut own_lock;
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
             map.insert(self.key.clone(), value_obj).await;
-            
-            ctx.send_aof(&crate::error::Command::Set(self.clone())).await;
+
+            ctx.send_aof(&crate::error::Command::Set(self.clone()))
+                .await;
         };
 
         Ok(Frame::Simple("OK".to_string()))
@@ -45,10 +43,7 @@ impl CommandExecutor for SetCommand {
 }
 
 impl CommandExecutor for GetCommand {
-    async fn execute(
-        &self,
-        ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let mut own_lock;
         let mut sessions_guard;
         let map = get_read_lock!(ctx, &self.key, own_lock, sessions_guard);
@@ -86,16 +81,17 @@ impl CommandExecutor for MSetCommand {
                 let mut own_lock;
                 let mut sessions_guard;
                 let map = get_write_lock!(ctx, key, own_lock, sessions_guard);
-                
+
                 let value_entry = match bytes_to_i64_fast(val) {
                     Some(i) => ValueEntry::new(Value::Simple(Element::Int(i)), None),
                     None => ValueEntry::new(Value::Simple(Element::String(val.clone())), None),
                 };
-                
+
                 map.insert(key.clone(), value_entry).await;
             }
-            
-            ctx.send_aof(&crate::error::Command::MSet(self.clone())).await;
+
+            ctx.send_aof(&crate::error::Command::MSet(self.clone()))
+                .await;
         };
 
         Ok(Frame::Simple("OK".to_string()))
@@ -115,7 +111,7 @@ impl CommandExecutor for MGetCommand {
             let mut sessions_guard;
             let map = get_read_lock!(ctx, key, own_lock, sessions_guard);
             let value = map.select(key).await;
-            
+
             let frame = match value {
                 Some(entry) => {
                     let data = entry.data.clone();

@@ -1,16 +1,13 @@
-use std::collections::VecDeque;
 use crate::{
     command_execute::{CommandContext, CommandExecutor, parse_int_from_bytes},
     db::LockedDb,
-    error::{Frame, KvError, LPushCommand, LPopCommand},
+    error::{Frame, KvError, LPopCommand, LPushCommand},
     types::{Element, Value, ValueEntry},
 };
+use std::collections::VecDeque;
 
 impl CommandExecutor for LPushCommand {
-    async fn execute(
-        &self,
-        ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let new_len = {
             let mut own_lock;
             let mut sessions_guard;
@@ -24,7 +21,10 @@ impl CommandExecutor for LPushCommand {
                         _ => {
                             // 还原值，返回类型错误
                             map.insert(self.key.clone(), entry).await;
-                            return Ok(Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                            return Ok(Frame::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .into(),
+                            ));
                         }
                     }
                 }
@@ -38,9 +38,14 @@ impl CommandExecutor for LPushCommand {
             }
 
             let new_len = list.len() as i64;
-            map.insert(self.key.clone(), ValueEntry::new(Value::List(list, elements_heap), expires_at)).await;
-            
-            ctx.send_aof(&crate::error::Command::LPush(self.clone())).await;
+            map.insert(
+                self.key.clone(),
+                ValueEntry::new(Value::List(list, elements_heap), expires_at),
+            )
+            .await;
+
+            ctx.send_aof(&crate::error::Command::LPush(self.clone()))
+                .await;
             new_len
         };
         Ok(Frame::Integer(new_len))
@@ -48,10 +53,7 @@ impl CommandExecutor for LPushCommand {
 }
 
 impl CommandExecutor for LPopCommand {
-    async fn execute(
-        &self,
-        ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let frame = {
             let mut own_lock;
             let mut sessions_guard;
@@ -65,7 +67,10 @@ impl CommandExecutor for LPopCommand {
                         _ => {
                             // 如果不是 List 类型，把原值塞回去并返回错误
                             map.insert(self.key.clone(), entry).await;
-                            return Ok(Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                            return Ok(Frame::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .into(),
+                            ));
                         }
                     }
                 }
@@ -78,15 +83,20 @@ impl CommandExecutor for LPopCommand {
                     Element::String(bytes) => Frame::Bulk(bytes),
                     Element::Int(i) => Frame::Bulk(parse_int_from_bytes(i)),
                 };
-                
+
                 // 只有列表非空才放回 map
                 if !list.is_empty() {
-                    map.insert(self.key.clone(), ValueEntry::new(Value::List(list, elements_heap), expires_at)).await;
+                    map.insert(
+                        self.key.clone(),
+                        ValueEntry::new(Value::List(list, elements_heap), expires_at),
+                    )
+                    .await;
                 } else {
                     map.delete(&self.key).await;
                 }
-                
-                ctx.send_aof(&crate::error::Command::LPop(self.clone())).await;
+
+                ctx.send_aof(&crate::error::Command::LPop(self.clone()))
+                    .await;
                 frame
             } else {
                 Frame::Null

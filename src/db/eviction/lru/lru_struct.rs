@@ -97,6 +97,6 @@ impl EvictionPolicy for LruNode {
     }
 
     fn pop_victim(&mut self) -> Option<Arc<String>> {
-        self.list.pop_front()
+        self.list.peek_front()
     }
 }

@@ -21,8 +21,10 @@ pub async fn handle_connection(
     mut db: Db,
     mut connection_content: ConnectionContent,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // 1. 使用 Vec<u8> 作为缓冲区
-    let mut buf = BytesMut::with_capacity(1024);
+    // 禁用 Nagle 算法，避免在高并发 Pipelining 时出现延迟 ACK 导致的死锁/性能急剧下降
+    let _ = socket.set_nodelay(true);
+    // 1. 使用足够大的 Vec<u8> 作为缓冲区 (64KB)，确保 -P 32 等大批量命令能在一个 read_buf 内读取完毕
+    let mut buf = BytesMut::with_capacity(1024 * 64);
     // 目前来说用的模式是1 是 redis 格式 0 是单个字符模式
     let type_fix = 1;
     //创建订阅者
@@ -61,21 +63,19 @@ pub async fn handle_connection(
                     }
                 } else {
                     //println!("{:?}", std::str::from_utf8(&buf));
-                    match explain_execute_command(
-                        &mut buf,
-                        &mut db,
-                        &mut connection_content,
-                    )
-                    .await
+                    match explain_execute_command(&mut buf, &mut db, &mut connection_content).await
                     {
                         Ok(result) => {
-                            // 优化: 将所有响应合并到一个缓冲区，一次性发送
-                            // 避免 -P 32 管道模式下出现 32 次 write_all 带来的巨大系统调用开销
-                            let mut out_buf = bytes::BytesMut::new();
-                            for item in result {
-                                out_buf.extend_from_slice(&item);
-                            }
-                            if !out_buf.is_empty() {
+                            if result.len() == 1 {
+                                // 非 pipeline 模式，直接发送首个响应，避免多余的 BytesMut 申请与数据拷贝
+                                socket.write_all(&result[0]).await?;
+                            } else if !result.is_empty() {
+                                // pipeline 模式，预先精确分配内存，避免中间过程触发 reallocate 扩容
+                                let total_len: usize = result.iter().map(|x| x.len()).sum();
+                                let mut out_buf = bytes::BytesMut::with_capacity(total_len);
+                                for item in result {
+                                    out_buf.extend_from_slice(&item);
+                                }
                                 socket.write_all(&out_buf).await?;
                             }
                         }
@@ -140,11 +140,10 @@ async fn explain_execute_command(
      */
     while let Ok(Some((frame, size))) = parse_frame(vec) {
         match Command::try_from(frame) {
-            //这个错误事第一个指令就错误的错误 就是结构性质错误
             Ok(command) => match frame {
                 _ => {
-                    //这个事指令错误 而不是结构化错误
-                    let result: Frame = execute_command_normal(command, db, command_content.clone()).await?;
+                    let result: Frame =
+                        execute_command_normal(command, db, command_content.clone()).await?;
                     vec_result.push(result.serialize());
                     vec = &vec[size..];
                     total_size += size;

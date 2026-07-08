@@ -25,6 +25,7 @@ pub struct TtlEntry {
 
 pub static GLOBAL_MEMORY: AtomicUsize = AtomicUsize::new(0);
 
+#[repr(align(64))]
 pub struct MemoryCacheNode {
     pub db_store: HashMap<Arc<String>, ValueEntry>,
     pub approx_memory: AtomicUsize, // 它自己分片的账 记录具体的内存大小

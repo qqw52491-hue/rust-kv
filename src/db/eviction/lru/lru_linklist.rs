@@ -100,6 +100,13 @@ impl LruList {
         self.tail = Some(node_ptr);
     }
 
+    pub fn peek_front(&self) -> Option<Arc<String>> {
+        if let Some(head) = self.head {
+            unsafe { Some((*head.as_ptr()).key.clone()) }
+        } else {
+            None
+        }
+    }
 
     //删除头节点 并返回头节点的key
     pub fn pop_front(&mut self) -> Option<Arc<String>> {
