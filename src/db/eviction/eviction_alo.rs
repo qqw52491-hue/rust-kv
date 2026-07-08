@@ -57,16 +57,15 @@ impl Storage {
                     active_shards.swap_remove(random_active_index);
                     continue;
                 }
-                let key = shard
-                    .get_eviction_policy()
-                    .unwrap()
-                    .get_random_sample_key()
-                    .unwrap();
-                if let Some(value) = shard.select(&key).await {
-                    if let Some(expire_time) = value.expires_at {
-                        if get_cached_time_ms() > expire_time {
-                            // 调用统一的 delete 方法，内部会处理内存和 LRU 移除
-                            shard.delete(&key).await;
+                // 提取到单独的变量，让 get_eviction_policy 返回的 MutexGuard 及时释放，避免借用冲突
+                let key_opt = shard.get_eviction_policy().unwrap().get_random_sample_key();
+                if let Some(key) = key_opt {
+                    if let Some(value) = shard.select(&key).await {
+                        if let Some(expire_time) = value.expires_at {
+                            if get_cached_time_ms() > expire_time {
+                                // 调用统一的 delete 方法，内部会处理内存和 LRU 移除
+                                shard.delete(&key).await;
+                            }
                         }
                     }
                 }
@@ -87,8 +86,10 @@ impl Storage {
         //定时任务接收者
         loop {
             let mut shutdown = shutdown_clone.clone().subscribe();
-            let is_over_memory = crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory;
-            
+            let is_over_memory = crate::db::eviction::GLOBAL_MEMORY
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > target_memory;
+
             if !is_over_memory {
                 // 如果内存健康，休眠 100ms 慢慢巡逻
                 tokio::select! {
@@ -142,18 +143,32 @@ impl Storage {
                             if let Ok(_) = shutdown.try_recv() {
                                 break;
                             }
-                            if crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) <= target_memory {
+                            if crate::db::eviction::GLOBAL_MEMORY
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                                <= target_memory
+                            {
                                 break;
                             }
 
                             // 在循环内部获取【写锁】，这样不会长期阻塞整个分片
-                            let shard_lock_guard = store[db_index].message[shard_index].clone().write_owned().await;
-                            let mut shard_operator: Box<dyn crate::db::eviction::LockOwner> = Box::new(crate::db::eviction::DirectCacheNode::Writeguard(shard_lock_guard));
-                            
+                            let shard_lock_guard = store[db_index].message[shard_index]
+                                .clone()
+                                .write_owned()
+                                .await;
+                            let mut shard_operator: Box<dyn crate::db::eviction::LockOwner> =
+                                Box::new(crate::db::eviction::DirectCacheNode::Writeguard(
+                                    shard_lock_guard,
+                                ));
+
                             let mut deleted_in_batch = 0;
                             // 将批量删除提高到 200，减少 yield 带来的 tokio 上下文切换开销
-                            while deleted_in_batch < 200 && crate::db::eviction::GLOBAL_MEMORY.load(std::sync::atomic::Ordering::Relaxed) > target_memory {
-                                let key = shard_operator.get_eviction_policy().unwrap().pop_victim();
+                            while deleted_in_batch < 200
+                                && crate::db::eviction::GLOBAL_MEMORY
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    > target_memory
+                            {
+                                let key =
+                                    shard_operator.get_eviction_policy().unwrap().pop_victim();
                                 if let Some(key) = key {
                                     // 统一的 delete 方法会搞定 LRU 链表和内存记账
                                     shard_operator.delete(&key).await;
@@ -163,7 +178,7 @@ impl Storage {
                                     break;
                                 }
                             }
-                            
+
                             // 主动让出 CPU 给其他任务
                             tokio::task::yield_now().await;
 
@@ -179,7 +194,7 @@ impl Storage {
                     });
                     handles.push(task_delete);
                 }
-                
+
                 // 【关键修复】等待这批清理任务执行完毕！
                 // 否则如果内存没降下来，下一次 100ms 循环又会 spawn 5 个新任务
                 // 导致任务无限爆炸，最终耗尽 CPU 资源，让 SET 性能衰减到冰点
