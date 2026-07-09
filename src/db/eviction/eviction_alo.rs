@@ -9,7 +9,7 @@ use crate::{
     core_time::get_cached_time_ms,
     db::{
         Storage,
-        eviction::{LockOwner, MemoryCache, NUM_SHARDS},
+        eviction::{LockOwner, MemoryCache, NUM_SHARDS, traits::KvOperator},
     },
 };
 
@@ -43,33 +43,54 @@ impl Storage {
                 continue;
             }
 
-            let mut keys_check = 20;
+            let time_budget = Duration::from_millis(20);
+            let start_stopwatch = std::time::Instant::now();
 
-            while keys_check > 0 && !active_shards.is_empty() {
-                // 5. 从“活跃分片列表”中随机挑一个
-                let random_active_index = rand::thread_rng().gen_range(0..active_shards.len());
-                let (db_index, shard_index) = active_shards[random_active_index];
-                //抽取后获取锁
-                let mut shard = self.get_lock_write(db_index, shard_index).await;
-                //获取锁后再次判断 如果没有数据就跳过了
-                if shard.get_memory_usage() == 0 {
-                    //说明这个分片已经没有数据了
-                    active_shards.swap_remove(random_active_index);
-                    continue;
-                }
-                // 提取到单独的变量，让 get_eviction_policy 返回的 MutexGuard 及时释放，避免借用冲突
-                let key_opt = shard.get_eviction_policy().unwrap().get_random_sample_key();
-                if let Some(key) = key_opt {
-                    if let Some(value) = shard.select(&key).await {
-                        if let Some(expire_time) = value.expires_at {
-                            if get_cached_time_ms() > expire_time {
-                                // 调用统一的 delete 方法，内部会处理内存和 LRU 移除
-                                shard.delete(&key).await;
+            // 动态频率抽样：如果这一批发现很多过期的，说明库里过期数据很多，那就别睡了，继续连轴转！
+            loop {
+                let mut keys_check = 20;
+                let mut expired_count = 0;
+
+                while keys_check > 0 && !active_shards.is_empty() {
+                    // 5. 从“活跃分片列表”中随机挑一个
+                    let random_active_index = rand::thread_rng().gen_range(0..active_shards.len());
+                    let (db_index, shard_index) = active_shards[random_active_index];
+                    //抽取后获取锁
+                    let mut shard = self.get_lock_write(db_index, shard_index).await;
+                    //获取锁后再次判断 如果没有数据就跳过了
+                    if shard.get_memory_usage() == 0 {
+                        //说明这个分片已经没有数据了
+                        active_shards.swap_remove(random_active_index);
+                        continue;
+                    }
+                    // 提取到单独的变量，让 get_eviction_policy 返回的 MutexGuard 及时释放，避免借用冲突
+                    let key_opt = shard.get_eviction_policy().unwrap().get_random_sample_key();
+                    if let Some(key) = key_opt {
+                        if let Some(value) = shard.select(&key) {
+                            if let Some(expire_time) = value.expires_at {
+                                if get_cached_time_ms() > expire_time {
+                                    // 调用统一的 delete 方法，内部会处理内存和 LRU 移除
+                                    shard.delete(&key);
+                                    expired_count += 1;
+                                }
                             }
                         }
                     }
+                    keys_check -= 1;
                 }
-                keys_check -= 1;
+
+                // 如果过期率低于 25%（20 个里不到 5 个），说明库里过期数据不多了，正常下班休息 100ms
+                if expired_count < 5 {
+                    break;
+                }
+
+                // 如果过期率极高，继续循环狂删！但为了防止霸占 Tokio 线程，强行让出一次 CPU
+                tokio::task::yield_now().await;
+
+                // 为了防止被无限期卡死（比如用户不断塞入已过期的数据），设定 20ms 强制下班阈值
+                if start_stopwatch.elapsed() > time_budget {
+                    break;
+                }
             }
         }
     }
@@ -135,7 +156,6 @@ impl Storage {
                     let store: Arc<Vec<Arc<MemoryCache>>> = self.store.clone();
                     // 内存超了，开一个任务
                     let task_delete = tokio::spawn(async move {
-                        let mut processed_count = 0;
                         let start_stopwatch = Instant::now();
                         let time_budget = Duration::from_millis(20);
                         loop {
@@ -171,9 +191,8 @@ impl Storage {
                                     shard_operator.get_eviction_policy().unwrap().pop_victim();
                                 if let Some(key) = key {
                                     // 统一的 delete 方法会搞定 LRU 链表和内存记账
-                                    shard_operator.delete(&key).await;
+                                    shard_operator.delete(&key);
                                     deleted_in_batch += 1;
-                                    processed_count += 1;
                                 } else {
                                     break;
                                 }

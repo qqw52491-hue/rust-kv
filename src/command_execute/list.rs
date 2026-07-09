@@ -4,6 +4,7 @@ use crate::{
     error::{Frame, KvError, LPopCommand, LPushCommand},
     types::{Element, Value, ValueEntry},
 };
+use crate::db::eviction::traits::KvOperator;
 use std::collections::VecDeque;
 
 impl CommandExecutor for LPushCommand {
@@ -13,14 +14,14 @@ impl CommandExecutor for LPushCommand {
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
 
-            let (mut list, expires_at, mut elements_heap) = match map.take(&self.key).await {
+            let (mut list, expires_at, mut elements_heap) = match map.take(&self.key) {
                 Some(entry) => {
                     let exp = entry.expires_at;
                     match entry.data {
                         Value::List(deque, size) => (deque, exp, size),
                         _ => {
                             // 还原值，返回类型错误
-                            map.insert(self.key.clone(), entry).await;
+                            map.insert(self.key.clone(), entry);
                             return Ok(Frame::Error(
                                 "WRONGTYPE Operation against a key holding the wrong kind of value"
                                     .into(),
@@ -41,8 +42,7 @@ impl CommandExecutor for LPushCommand {
             map.insert(
                 self.key.clone(),
                 ValueEntry::new(Value::List(list, elements_heap), expires_at),
-            )
-            .await;
+            );
 
             ctx.send_aof(&crate::error::Command::LPush(self.clone()))
                 .await;
@@ -59,14 +59,14 @@ impl CommandExecutor for LPopCommand {
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
 
-            let (mut list, expires_at, mut elements_heap) = match map.take(&self.key).await {
+            let (mut list, expires_at, mut elements_heap) = match map.take(&self.key) {
                 Some(entry) => {
                     let exp = entry.expires_at;
                     match entry.data {
                         Value::List(deque, size) => (deque, exp, size),
                         _ => {
                             // 如果不是 List 类型，把原值塞回去并返回错误
-                            map.insert(self.key.clone(), entry).await;
+                            map.insert(self.key.clone(), entry);
                             return Ok(Frame::Error(
                                 "WRONGTYPE Operation against a key holding the wrong kind of value"
                                     .into(),
@@ -89,10 +89,9 @@ impl CommandExecutor for LPopCommand {
                     map.insert(
                         self.key.clone(),
                         ValueEntry::new(Value::List(list, elements_heap), expires_at),
-                    )
-                    .await;
+                    );
                 } else {
-                    map.delete(&self.key).await;
+                    map.delete(&self.key);
                 }
 
                 ctx.send_aof(&crate::error::Command::LPop(self.clone()))

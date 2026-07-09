@@ -47,7 +47,10 @@ impl CommandExecutor for EvalCommand {
         //     connect_content: ctx.connect_content.clone(),
         // }).await; // 直接 await！
         //现在我复制了这个链接
-        let content = ctx.connect_content.clone().unwrap().clone();
+        let content = match &ctx {
+            CommandContext::Normal { connect_content, .. } => connect_content.clone(),
+            _ => return Err(KvError::ProtocolError("Eval can only run in a normal client context".to_string())),
+        };
 
         // 这里的 Result<Frame, KvError> 就是你要通过信封回传的数据类型
         let (tx, rx) = oneshot::channel::<Result<Frame, KvError>>();

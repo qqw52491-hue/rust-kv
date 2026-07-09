@@ -6,6 +6,7 @@ use crate::{
         parse_int_from_bytes,
     },
     db::LockedDb,
+    db::eviction::traits::KvOperator,
     error::{Frame, GetCommand, KvError, SetCommand},
     types::{Element, Value, ValueEntry},
 };
@@ -32,7 +33,7 @@ impl CommandExecutor for SetCommand {
             let mut own_lock;
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
-            map.insert(self.key.clone(), value_obj).await;
+            map.insert(self.key.clone(), value_obj);
 
             ctx.send_aof(&crate::error::Command::Set(self.clone()))
                 .await;
@@ -47,7 +48,7 @@ impl CommandExecutor for GetCommand {
         let mut own_lock;
         let mut sessions_guard;
         let map = get_read_lock!(ctx, &self.key, own_lock, sessions_guard);
-        let value = map.select(&self.key.clone()).await;
+        let value = map.select(&self.key.clone());
         match value {
             Some(entry) => {
                 let data = entry.data.clone();
@@ -87,7 +88,7 @@ impl CommandExecutor for MSetCommand {
                     None => ValueEntry::new(Value::Simple(Element::String(val.clone())), None),
                 };
 
-                map.insert(key.clone(), value_entry).await;
+                map.insert(key.clone(), value_entry);
             }
 
             ctx.send_aof(&crate::error::Command::MSet(self.clone()))
@@ -110,7 +111,7 @@ impl CommandExecutor for MGetCommand {
             let mut own_lock;
             let mut sessions_guard;
             let map = get_read_lock!(ctx, key, own_lock, sessions_guard);
-            let value = map.select(key).await;
+            let value = map.select(key);
 
             let frame = match value {
                 Some(entry) => {

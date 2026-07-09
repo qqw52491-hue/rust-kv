@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::{
     command_execute::{CommandContext, CommandExecutor, parse_int_from_bytes},
     db::LockedDb,
+    db::eviction::traits::KvOperator,
     error::{Frame, KvError, HSetCommand, HGetCommand, HDelCommand},
     types::{Element, Value, ValueEntry},
 };
@@ -16,14 +17,14 @@ impl CommandExecutor for HSetCommand {
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
 
-            let (mut hash_map, expires_at, mut elements_heap) = match map.take(&self.key).await {
+            let (mut hash_map, expires_at, mut elements_heap) = match map.take(&self.key) {
                 Some(entry) => {
                     let exp = entry.expires_at;
                     match entry.data {
                         Value::Hash(h, size) => (h, exp, size),
                         _ => {
                             // 还原值，返回类型错误
-                            map.insert(self.key.clone(), entry).await;
+                            map.insert(self.key.clone(), entry);
                             return Ok(Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
                         }
                     }
@@ -44,7 +45,7 @@ impl CommandExecutor for HSetCommand {
                 }
             }
 
-            map.insert(self.key.clone(), ValueEntry::new(Value::Hash(hash_map, elements_heap), expires_at)).await;
+            map.insert(self.key.clone(), ValueEntry::new(Value::Hash(hash_map, elements_heap), expires_at));
             
             // 就在锁将要释放前发送 AOF
             ctx.send_aof(&crate::error::Command::HSet(self.clone())).await;
@@ -65,7 +66,7 @@ impl CommandExecutor for HGetCommand {
         let mut sessions_guard;
         let map = get_read_lock!(ctx, &self.key, own_lock, sessions_guard);
 
-        match map.select(&self.key).await {
+        match map.select(&self.key) {
             Some(entry) => {
                 match &entry.data {
                     Value::Hash(hash_map, _) => {
@@ -97,13 +98,13 @@ impl CommandExecutor for HDelCommand {
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
 
-            let (mut hash_map, expires_at, mut elements_heap) = match map.take(&self.key).await {
+            let (mut hash_map, expires_at, mut elements_heap) = match map.take(&self.key) {
                 Some(entry) => {
                     let exp = entry.expires_at;
                     match entry.data {
                         Value::Hash(h, size) => (h, exp, size),
                         _ => {
-                            map.insert(self.key.clone(), entry).await;
+                            map.insert(self.key.clone(), entry);
                             return Ok(Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
                         }
                     }
@@ -120,9 +121,9 @@ impl CommandExecutor for HDelCommand {
             }
 
             if !hash_map.is_empty() {
-                map.insert(self.key.clone(), ValueEntry::new(Value::Hash(hash_map, elements_heap), expires_at)).await;
+                map.insert(self.key.clone(), ValueEntry::new(Value::Hash(hash_map, elements_heap), expires_at));
             } else {
-                map.delete(&self.key).await;
+                map.delete(&self.key);
             }
 
             ctx.send_aof(&crate::error::Command::HDel(self.clone())).await;

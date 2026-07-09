@@ -9,8 +9,8 @@ use tokio::{
 
 use crate::{
     command_execute::{CommandContext, CommandExecutor}, context::ConnectionState, db::{
+        eviction::{MemoryCache, traits::{KvOperator, Transactional}},
         LockedDb,
-        eviction::{KvOperator, MemoryCache},
     }, error::{Command, EvalCommand, Frame, KvError}, lua::{lua_exchange::lua_value_to_bulk_frame, lua_work::{CURRENT_ENV, CurrentRequestEnv}}
 };
 
@@ -52,10 +52,8 @@ impl EvalCommand {
             }
 
             //拿出arc 的所有权 并且全部提交
-            for (_size, lock) in entry.drain() {
-                if let LockedDb::Write(lock_mut) = lock {
-                    lock_mut.as_transactional().unwrap().commit().await;
-                }
+            for (_size, mut lock) in entry.drain() {
+                lock.commit();
             }
         }
         final_result
@@ -68,7 +66,7 @@ pub async fn general_lua() -> Result<Lua, KvError> {
             // 关键改变在这里！我们只接收一个 `args`，它包含了所有参数！
             move |_lua, args: mlua::MultiValue| {
                 //在第一次调用的时候才初始化 但是顺序上没有问题
-                let (sessions, db_clone, content) = CURRENT_ENV
+                let sessions = CURRENT_ENV
                     .with(|cell| {
                         // 1. 获取写锁 (RefMut<Option<CurrentRequestEnv>>)
                         let mut borrow = cell.borrow_mut();
@@ -78,11 +76,7 @@ pub async fn general_lua() -> Result<Lua, KvError> {
                         if let Some(env) = borrow.as_mut() {
                             // 或者往 map 里插入新数据
                             // env.sessions.insert(999, new_lock);
-                            Some((
-                                env.sessions.clone(),
-                                env.ctx.db.clone(),
-                                env.ctx.connect_content.clone(),
-                            ))
+                            Some(env.sessions.clone())
                         } else {
                             None
                         }
@@ -120,10 +114,8 @@ pub async fn general_lua() -> Result<Lua, KvError> {
                     let command = Command::try_from(Frame::Array(frames))
                         .map_err(|e| mlua::Error::runtime("redis.call 之后进行类型转换"))?;
 
-                    let ctx = CommandContext {
-                        db: db_clone,
-                        connect_content: None, // 【绝杀点】禁止 Lua 内部命令在执行时直接发 AOF！
-                        lua_sessions: Some(sessions.clone()),
+                    let ctx = CommandContext::Lua {
+                        lua_sessions: sessions.clone(),
                     };
                     let frame = command.execute(ctx)
                         .await
@@ -195,7 +187,10 @@ pub async fn init_lua_pre(
     //env.sessions = Some(sessions.clone());
 
     for shard_index in shard_indices {
-        let db = command_content.db.clone().unwrap();
+        let db = match &command_content {
+            CommandContext::Normal { db, .. } => db.clone(),
+            _ => panic!("Lua script must run in Normal context"),
+        };
         // lock_shard_write 是异步的，这里会等待直到拿到锁
         // 因为是按顺序的，所以绝对不会死锁
         let guard = db.store.lock_write_lua(shard_index).await;

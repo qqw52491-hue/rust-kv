@@ -7,10 +7,8 @@ use crate::error::{Command, Frame, KvError, LockSpec};
 
 // 假定：Command: Clone
 pub async fn execute_command(command: Command, db: &Db) -> Result<Frame, KvError> {
-    let ctx = CommandContext {
-        db: Some(db.clone()),
-        connect_content: None,
-        lua_sessions: None,
+    let ctx = CommandContext::Recovery {
+        db: db.clone(),
     };
     command.execute(ctx).await
 }
@@ -46,10 +44,9 @@ pub async fn execute_command_normal(
     db: &Db,
     connect_content: ConnectionContent,
 ) -> Result<Frame, KvError> {
-    let ctx = CommandContext {
-        db: Some(db.clone()),
-        connect_content: Some(connect_content.clone()),
-        lua_sessions: None,
+    let ctx = CommandContext::Normal {
+        db: db.clone(),
+        connect_content: connect_content.clone(),
     };
     
     let frame: Frame = command.execute(ctx).await?;
