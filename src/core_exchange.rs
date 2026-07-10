@@ -87,6 +87,18 @@ impl TryFrom<Frame> for Command {
                         }
                         HDelCommand::parse(iter, command_name)
                     }
+                    "JSON.SET" => {
+                        if length != 4 {
+                            return Err(ProtocolError("JSON.SET 命令需要 3 个参数".into()));
+                        }
+                        crate::domain::command::JsonSetCommand::parse(iter, command_name)
+                    }
+                    "JSON.GET" => {
+                        if length != 3 {
+                            return Err(ProtocolError("JSON.GET 命令需要 2 个参数".into()));
+                        }
+                        crate::domain::command::JsonGetCommand::parse(iter, command_name)
+                    }
                     "PING" => PingCommand::parse(iter, command_name),
                     "MULTI" => Ok(Command::Multi(crate::domain::command::MultiCommand {})),
                     "EXEC" => Ok(Command::Exec(crate::domain::command::ExecCommand {})),

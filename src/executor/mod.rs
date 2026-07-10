@@ -42,8 +42,9 @@ macro_rules! get_read_lock {
 
  mod common;
  mod string;
- mod list;
-mod hash;
+pub mod list;
+pub mod hash;
+pub mod json;
 #[cfg(test)]
 mod list_test;
 

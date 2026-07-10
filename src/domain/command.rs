@@ -22,6 +22,8 @@ pub enum Command {
     Multi(MultiCommand),
     Exec(ExecCommand),
     MultiGroup(Vec<Command>),
+    JsonSet(JsonSetCommand),
+    JsonGet(JsonGetCommand),
 }
 
 // ─────────────────────────────────────────────
@@ -110,6 +112,19 @@ pub struct MultiCommand {}
 #[derive(Debug, Clone)]
 pub struct ExecCommand {}
 
+#[derive(Debug, Clone)]
+pub struct JsonSetCommand {
+    pub key: Arc<String>,
+    pub path: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct JsonGetCommand {
+    pub key: Arc<String>,
+    pub path: String,
+}
+
 // ─────────────────────────────────────────────
 // 辅助类型：SET 命令专属
 // ─────────────────────────────────────────────
@@ -160,6 +175,8 @@ impl Command {
             Command::Multi(_) => LockSpec::None,
             Command::Exec(_) => LockSpec::None,
             Command::MultiGroup(_) => LockSpec::None,
+            Command::JsonSet(c) => LockSpec::Write(&c.key),
+            Command::JsonGet(c) => LockSpec::Read(&c.key),
         }
     }
 

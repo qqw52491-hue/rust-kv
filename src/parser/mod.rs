@@ -4,7 +4,8 @@ use bytes::Bytes;
 
 use crate::error::{Command, Frame, KvError};
 mod common;
-mod string;
+pub mod string;
+pub mod json;
 mod list;
 mod hash;
 /// 尝试从一个 Frame 中提取出 Bulk String 并转换为 String

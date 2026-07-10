@@ -19,6 +19,7 @@ pub enum Value {
     List(VecDeque<Element>, usize),
     Hash(HashMap<String, Element>, usize), // Hash 的 value 也是 Element
     Set(HashSet<Element>, usize),
+    Json(serde_json::Value, usize), // 原生 JSON 树，以及额外追踪的堆内存大小
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +56,7 @@ impl Value {
                 let container_heap = set.capacity() * std::mem::size_of::<Element>();
                 *elements_heap + container_heap
             }
+            Value::Json(_, size) => *size,
         }
     }
 }
