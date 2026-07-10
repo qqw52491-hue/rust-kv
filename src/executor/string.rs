@@ -33,6 +33,21 @@ impl Executor for SetCommand {
             let mut own_lock;
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
+            
+            // Check NX / XX condition
+            if let Some(condition) = &self.condition {
+                let exists = map.select(&self.key).is_some();
+                match condition {
+                    crate::error::SetCondition::NX if exists => {
+                        return Ok(Frame::Null); // Key already exists, NX fails, return nil
+                    }
+                    crate::error::SetCondition::XX if !exists => {
+                        return Ok(Frame::Null); // Key doesn't exist, XX fails, return nil
+                    }
+                    _ => {}
+                }
+            }
+            
             map.insert(self.key.clone(), value_obj);
 
             ctx.send_aof(&crate::error::Command::Set(self.clone()))
