@@ -29,6 +29,7 @@ impl Command {
             Command::Set(set_command) => set_command.encode_aof(ctx).await,
             Command::LPush(lpush_command) => lpush_command.encode_aof(ctx).await,
             Command::LPop(lpop_command) => lpop_command.encode_aof(ctx).await,
+            Command::BLPop(_) => Ok(()),
             Command::HSet(hset_command) => hset_command.encode_aof(ctx).await,
             Command::HDel(hdel_command) => hdel_command.encode_aof(ctx).await,
             Command::Get(_)

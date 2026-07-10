@@ -13,6 +13,7 @@ pub enum Command {
     EvalCommand(EvalCommand),
     LPush(LPushCommand),
     LPop(LPopCommand),
+    BLPop(BLPopCommand),
     HSet(HSetCommand),
     HGet(HGetCommand),
     HDel(HDelCommand),
@@ -98,6 +99,12 @@ pub struct LPopCommand {
 }
 
 #[derive(Debug, Clone)]
+pub struct BLPopCommand {
+    pub key: Arc<String>,
+    pub timeout: u64, // seconds
+}
+
+#[derive(Debug, Clone)]
 pub struct MultiCommand {}
 
 #[derive(Debug, Clone)]
@@ -141,6 +148,7 @@ impl Command {
             Command::Get(c) => LockSpec::Read(&c.key),
             Command::LPush(c) => LockSpec::Write(&c.key),
             Command::LPop(c) => LockSpec::Write(&c.key),
+            Command::BLPop(c) => LockSpec::Write(&c.key),
             Command::HSet(c) => LockSpec::Write(&c.key),
             Command::HGet(c) => LockSpec::Read(&c.key),
             Command::HDel(c) => LockSpec::Write(&c.key),

@@ -33,7 +33,7 @@ thread_local! {
 #[derive(Clone)]
 pub struct LuaRouter {
     // 存放所有工人的通道
-    senders: Vec<mpsc::Sender<LuaTask>>,
+    pub senders: Vec<mpsc::Sender<LuaTask>>,
 }
 
 impl LuaRouter {

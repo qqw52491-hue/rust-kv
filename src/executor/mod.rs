@@ -44,6 +44,8 @@ macro_rules! get_read_lock {
  mod string;
  mod list;
 mod hash;
+#[cfg(test)]
+mod list_test;
 
 #[derive(Clone)]
 pub enum CommandContext {

@@ -10,8 +10,10 @@ use fxhash::FxHasher;
 use std::hash::{Hash, Hasher};
 use tokio::sync::RwLock;
 
-use crate::{config::EvictionType, db::eviction::lru::lru_struct::LruNode, types::ValueEntry};
-use crate::db::eviction::traits::EvictionPolicy;
+use crate::{config::EvictionType, types::ValueEntry};
+use crate::db::eviction::{
+    EvictionPolicy, LfuNode, LruNode,
+};
 use crate::db::eviction::direct_node::DirectCacheNode;
 use crate::db::eviction::lua_node::LuaCacheNode;
 use crate::db::LockedDb;
@@ -37,7 +39,7 @@ impl MemoryCacheNode {
     pub fn new(config_type: &EvictionType) -> Self {
         let policy_instance: Box<dyn EvictionPolicy> = match config_type {
             EvictionType::LRU => Box::new(LruNode::new()),
-            EvictionType::LFU => todo!(),
+            EvictionType::LFU => Box::new(LfuNode::new()),
         };
         MemoryCacheNode {
             db_store: HashMap::new(),

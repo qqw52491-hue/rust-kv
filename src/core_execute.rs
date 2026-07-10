@@ -28,7 +28,7 @@ impl Executor for Command {
     ) -> Result<Frame, KvError> {
         delegate_execute!(self, ctx, [
             Get, Set, Ping, Unimplement, EvalCommand,
-            LPush, LPop, HSet, HGet, HDel, MSet, MGet, Multi, Exec, MultiGroup
+            LPush, LPop, BLPop, HSet, HGet, HDel, MSet, MGet, Multi, Exec, MultiGroup
         ])
     }
 }

@@ -5,7 +5,7 @@ pub mod types;
 
 // Re-export core types for ergonomic usage across the codebase
 pub use command::{
-    Command, EvalCommand, Expiration, GetCommand, LPopCommand, LPushCommand, LockSpec, PingCommand,
+    Command, EvalCommand, Expiration, GetCommand, LPopCommand, LPushCommand, BLPopCommand, LockSpec, PingCommand,
     SetCommand, SetCondition, UnimplementCommand, HSetCommand, HGetCommand, HDelCommand, MSetCommand, MGetCommand, MultiCommand, ExecCommand
 };
 pub use error::KvError;

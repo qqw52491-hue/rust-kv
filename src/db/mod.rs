@@ -109,16 +109,21 @@ impl LockOwner for LockedDb {
 #[derive(Clone, Default)]
 pub struct Storage {
     pub(crate) store: Arc<Vec<Arc<MemoryCache>>>,
+    // 阻塞队列通知中心: HashMap<DB_Index, HashMap<Key, VecDeque<Sender>>>
+    pub(crate) blocking_queues: Arc<Vec<tokio::sync::Mutex<std::collections::HashMap<Arc<String>, std::collections::VecDeque<tokio::sync::oneshot::Sender<bytes::Bytes>>>>>>,
 }
 
 impl Storage {
     pub fn new(config_type: &EvictionType) -> Self {
         let mut local_vec: Vec<Arc<MemoryCache>> = Vec::with_capacity(16);
+        let mut queues_vec = Vec::with_capacity(16);
         for _ in 0..16 {
             local_vec.push(Arc::new(MemoryCache::new(config_type)));
+            queues_vec.push(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         }
         Storage {
             store: Arc::new(local_vec),
+            blocking_queues: Arc::new(queues_vec),
         }
     }
 

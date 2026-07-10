@@ -2,7 +2,7 @@ use crate::parser::Parser;
 use crate::error::KvError::ProtocolError;
 use crate::error::{
     Command, EvalCommand, Frame, GetCommand, KvError, PingCommand, SetCommand, UnimplementCommand,
-    LPushCommand, LPopCommand, HSetCommand, HGetCommand, HDelCommand,
+    LPushCommand, LPopCommand, BLPopCommand, HSetCommand, HGetCommand, HDelCommand,
 };
 use crate::domain::MSetCommand;
 use crate::domain::MGetCommand;
@@ -62,6 +62,12 @@ impl TryFrom<Frame> for Command {
                             return Err(ProtocolError("LPOP 命令需要 1 个参数".into()));
                         }
                         LPopCommand::parse(iter, command_name)
+                    }
+                    "BLPOP" => {
+                        if length != 3 {
+                            return Err(ProtocolError("BLPOP 命令需要 2 个参数".into()));
+                        }
+                        BLPopCommand::parse(iter, command_name)
                     }
                     "HSET" => {
                         if length < 4 || length % 2 != 0 {

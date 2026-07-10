@@ -11,3 +11,5 @@ pub use traits::{EvictionPolicy, KvOperator, Transactional, LockOwner};
 pub use cache_store::{MemoryCache, MemoryCacheNode, TtlEntry, GLOBAL_MEMORY, NUM_SHARDS};
 pub use direct_node::DirectCacheNode;
 pub use lua_node::{LuaCacheNode, ChangeOp};
+pub use lru::lru_struct::LruNode;
+pub use lfu::lfu_struct::LfuNode;

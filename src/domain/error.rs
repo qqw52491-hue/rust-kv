@@ -28,7 +28,7 @@ pub enum KvError {
 // 后续可按需删除，统一改为 `use crate::command::xxx`
 // ─────────────────────────────────────────────
 pub use crate::domain::command::{
-    Command, EvalCommand, Expiration, GetCommand, LPopCommand, LPushCommand, LockSpec, PingCommand,
+    Command, EvalCommand, Expiration, GetCommand, LPopCommand, LPushCommand, BLPopCommand, LockSpec, PingCommand,
     SetCommand, SetCondition, UnimplementCommand, HSetCommand, HGetCommand, HDelCommand, MSetCommand, MGetCommand, MultiCommand, ExecCommand,
 };
 pub use crate::domain::protocol::{Frame, IsAof, ToBulk};

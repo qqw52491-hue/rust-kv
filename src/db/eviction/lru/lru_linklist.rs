@@ -36,6 +36,11 @@ impl LruList {
             len: 0,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.head.is_none()
+    }
+
     //这个是直接添加到末尾
     pub fn push_back(&mut self, key: Arc<String>) -> NonNull<Node> {
         let new_node = Node::new(key);
