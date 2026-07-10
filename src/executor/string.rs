@@ -1,8 +1,8 @@
 use bytes::Bytes;
 
 use crate::{
-    command_execute::{
-        CommandContext, CommandExecutor, bytes_to_i64_fast, calculate_expiration_timestamp_ms,
+    executor::{
+        CommandContext, Executor, bytes_to_i64_fast, calculate_expiration_timestamp_ms,
         parse_int_from_bytes,
     },
     db::LockedDb,
@@ -11,7 +11,7 @@ use crate::{
     types::{Element, Value, ValueEntry},
 };
 
-impl CommandExecutor for SetCommand {
+impl Executor for SetCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let time_expire_u64: Option<u64>;
         let time_expire = if let Some(expire) = &self.expiration {
@@ -43,7 +43,7 @@ impl CommandExecutor for SetCommand {
     }
 }
 
-impl CommandExecutor for GetCommand {
+impl Executor for GetCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let mut own_lock;
         let mut sessions_guard;
@@ -70,7 +70,7 @@ impl CommandExecutor for GetCommand {
 
 use crate::domain::MSetCommand;
 
-impl CommandExecutor for MSetCommand {
+impl Executor for MSetCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let mut sorted_pairs = self.keys_and_values.clone();
         // 按照 shard_index 以及 key 排序，防止死锁
@@ -101,7 +101,7 @@ impl CommandExecutor for MSetCommand {
 
 use crate::domain::MGetCommand;
 
-impl CommandExecutor for MGetCommand {
+impl Executor for MGetCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let mut results = Vec::new();
         // MGET 不需要提前排序防死锁，因为读锁允许并发读取，

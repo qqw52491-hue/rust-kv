@@ -1,6 +1,6 @@
 use crate::Db;
-use crate::aof_exchange::AofContent;
-use crate::command_execute::{CommandContext, CommandExecutor};
+use crate::aof_encoder::AofContent;
+use crate::executor::{CommandContext, Executor};
 use crate::context::ConnectionContent;
 use crate::db::LockedDb;
 use crate::error::{Command, Frame, KvError, LockSpec};
@@ -21,7 +21,7 @@ macro_rules! delegate_execute {
     };
 }
 
-impl CommandExecutor for Command {
+impl Executor for Command {
     async fn execute(
         &self,
         ctx: CommandContext,
@@ -33,7 +33,7 @@ impl CommandExecutor for Command {
     }
 }
 
-impl CommandExecutor for Vec<Command> {
+impl Executor for Vec<Command> {
     async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
         Ok(Frame::Null)
     }

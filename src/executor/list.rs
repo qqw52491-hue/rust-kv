@@ -1,5 +1,5 @@
 use crate::{
-    command_execute::{CommandContext, CommandExecutor, parse_int_from_bytes},
+    executor::{CommandContext, Executor, parse_int_from_bytes},
     db::LockedDb,
     error::{Frame, KvError, LPopCommand, LPushCommand},
     types::{Element, Value, ValueEntry},
@@ -7,7 +7,7 @@ use crate::{
 use crate::db::eviction::traits::KvOperator;
 use std::collections::VecDeque;
 
-impl CommandExecutor for LPushCommand {
+impl Executor for LPushCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let new_len = {
             let mut own_lock;
@@ -52,7 +52,7 @@ impl CommandExecutor for LPushCommand {
     }
 }
 
-impl CommandExecutor for LPopCommand {
+impl Executor for LPopCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         let frame = {
             let mut own_lock;

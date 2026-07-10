@@ -10,12 +10,12 @@ use std::sync::Arc;
 macro_rules! get_write_lock {
     ($ctx:expr, $key:expr, $own_lock:ident, $sessions_guard:ident) => {
         match &$ctx {
-            crate::command_execute::CommandContext::Lua { lua_sessions } => {
+            crate::executor::CommandContext::Lua { lua_sessions } => {
                 let shard_index = crate::db::eviction::MemoryCache::get_shard_index($key);
                 $sessions_guard = lua_sessions.lock().await;
                 $sessions_guard.get_mut(&shard_index).unwrap()
             }
-            crate::command_execute::CommandContext::Normal { db, .. } | crate::command_execute::CommandContext::Recovery { db } => {
+            crate::executor::CommandContext::Normal { db, .. } | crate::executor::CommandContext::Recovery { db } => {
                 $own_lock = db.store.lock_write($key).await;
                 &mut $own_lock
             }
@@ -27,12 +27,12 @@ macro_rules! get_write_lock {
 macro_rules! get_read_lock {
     ($ctx:expr, $key:expr, $own_lock:ident, $sessions_guard:ident) => {
         match &$ctx {
-            crate::command_execute::CommandContext::Lua { lua_sessions } => {
+            crate::executor::CommandContext::Lua { lua_sessions } => {
                 let shard_index = crate::db::eviction::MemoryCache::get_shard_index($key);
                 $sessions_guard = lua_sessions.lock().await;
                 $sessions_guard.get_mut(&shard_index).unwrap()
             }
-            crate::command_execute::CommandContext::Normal { db, .. } | crate::command_execute::CommandContext::Recovery { db } => {
+            crate::executor::CommandContext::Normal { db, .. } | crate::executor::CommandContext::Recovery { db } => {
                 $own_lock = db.store.lock_read($key).await;
                 &mut $own_lock
             }
@@ -64,7 +64,7 @@ impl CommandContext {
     pub async fn send_aof(&self, cmd: &crate::error::Command) {
         if let CommandContext::Normal { connect_content, .. } = self {
             if let Err(e) = cmd
-                .exe_aof_command(crate::aof_exchange::AofContent {
+                .encode_aof_command(crate::aof_encoder::AofContent {
                     aof_tx: &connect_content.aof_tx,
                     shutdown_tx: &connect_content.shutdown_tx,
                 })
@@ -76,7 +76,7 @@ impl CommandContext {
     }
 }
 
-pub trait CommandExecutor {
+pub trait Executor {
     fn execute(
         &self,
         ctx: CommandContext,

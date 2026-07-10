@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use crate::{
-    aof_exchange::{AofContent, CommandAofExchange},
-    error::{Frame, LPushCommand, LPopCommand},
+    aof_encoder::{AofContent, AofEncoder},
+    error::{Frame, LPopCommand, LPushCommand},
 };
 
-impl CommandAofExchange for LPushCommand {
-    async fn execute_aof<'a>(
+impl AofEncoder for LPushCommand {
+    async fn encode_aof<'a>(
         &self,
         ctx: AofContent<'a>,
     ) -> Result<(), String> {
@@ -19,8 +19,8 @@ impl CommandAofExchange for LPushCommand {
     }
 }
 
-impl CommandAofExchange for LPopCommand {
-    async fn execute_aof<'a>(
+impl AofEncoder for LPopCommand {
+    async fn encode_aof<'a>(
         &self,
         ctx: AofContent<'a>,
     ) -> Result<(), String> {

@@ -9,9 +9,9 @@ mod string;
 mod list;
 mod hash;
 
-pub trait CommandAofExchange {
-    // execute 方法現在接收 CommandContext 作為參數！
-    async fn execute_aof<'a>(
+pub trait AofEncoder {
+    // encode_aof 方法現在接收 AofContent 作為參數！
+    async fn encode_aof<'a>(
         &self,
         // 2. 将这个生命周期 'ctx 应用到 CommandContext 的引用上
         ctx: AofContent<'a>,
@@ -24,21 +24,21 @@ pub trait CommandAofExchange {
 所以一个模块是功能性划分 结构是实体划分 承载结构
 */
 impl Command {
-    pub async fn exe_aof_command<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+    pub async fn encode_aof_command<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         match self {
-            Command::Set(set_command) => set_command.execute_aof(ctx).await,
-            Command::LPush(lpush_command) => lpush_command.execute_aof(ctx).await,
-            Command::LPop(lpop_command) => lpop_command.execute_aof(ctx).await,
-            Command::HSet(hset_command) => hset_command.execute_aof(ctx).await,
-            Command::HDel(hdel_command) => hdel_command.execute_aof(ctx).await,
+            Command::Set(set_command) => set_command.encode_aof(ctx).await,
+            Command::LPush(lpush_command) => lpush_command.encode_aof(ctx).await,
+            Command::LPop(lpop_command) => lpop_command.encode_aof(ctx).await,
+            Command::HSet(hset_command) => hset_command.encode_aof(ctx).await,
+            Command::HDel(hdel_command) => hdel_command.encode_aof(ctx).await,
             Command::Get(_)
             | Command::HGet(_)
             | Command::Ping(_)
             | Command::Unimplement(_)
             | Command::MGet(_)
             | Command::EvalCommand(_) => Ok(()),
-            Command::Multi(c) => c.execute_aof(ctx).await,
-            Command::Exec(c) => c.execute_aof(ctx).await,
+            Command::Multi(c) => c.encode_aof(ctx).await,
+            Command::Exec(c) => c.encode_aof(ctx).await,
             Command::MultiGroup(cmds) => {
                 let mut buf = Frame::Array(vec![Frame::Bulk(Bytes::from("MULTI"))]).serialize();
                 let (dummy_tx, mut dummy_rx) = tokio::sync::mpsc::channel(100);
@@ -49,12 +49,12 @@ impl Command {
                         shutdown_tx: &dummy_shutdown_tx,
                     };
                     let _ = match cmd {
-                        Command::Set(c) => c.execute_aof(dummy_ctx).await,
-                        Command::LPush(c) => c.execute_aof(dummy_ctx).await,
-                        Command::LPop(c) => c.execute_aof(dummy_ctx).await,
-                        Command::HSet(c) => c.execute_aof(dummy_ctx).await,
-                        Command::HDel(c) => c.execute_aof(dummy_ctx).await,
-                        Command::MSet(c) => c.execute_aof(dummy_ctx).await,
+                        Command::Set(c) => c.encode_aof(dummy_ctx).await,
+                        Command::LPush(c) => c.encode_aof(dummy_ctx).await,
+                        Command::LPop(c) => c.encode_aof(dummy_ctx).await,
+                        Command::HSet(c) => c.encode_aof(dummy_ctx).await,
+                        Command::HDel(c) => c.encode_aof(dummy_ctx).await,
+                        Command::MSet(c) => c.encode_aof(dummy_ctx).await,
                         _ => Ok(()),
                     };
                     while let Ok(msg) = dummy_rx.try_recv() {
@@ -65,22 +65,22 @@ impl Command {
                 buf.extend(exec_buf);
                 ctx.aof_tx.send(buf).await.map_err(|e| e.to_string())
             }
-            Command::MSet(c) => c.execute_aof(ctx).await,
+            Command::MSet(c) => c.encode_aof(ctx).await,
         }
     }
 }
 
 use crate::error::{MultiCommand, ExecCommand, Frame};
 
-impl CommandAofExchange for MultiCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+impl AofEncoder for MultiCommand {
+    async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let frame = Frame::Array(vec![Frame::Bulk(Bytes::from("MULTI"))]);
         ctx.aof_tx.send(frame.serialize()).await.map_err(|e| e.to_string())
     }
 }
 
-impl CommandAofExchange for ExecCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+impl AofEncoder for ExecCommand {
+    async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let frame = Frame::Array(vec![Frame::Bulk(Bytes::from("EXEC"))]);
         ctx.aof_tx.send(frame.serialize()).await.map_err(|e| e.to_string())
     }

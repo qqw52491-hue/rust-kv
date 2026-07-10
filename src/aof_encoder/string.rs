@@ -2,12 +2,12 @@ use bytes::Bytes;
 use futures::SinkExt;
 
 use crate::{
-    aof_exchange::{AofContent, CommandAofExchange, exchange_absolute_time, parse_int_from_bytes},
-    error::{Frame, SetCommand},
+    aof_encoder::{AofContent, AofEncoder, exchange_absolute_time, parse_int_from_bytes},
+    error::{Command, Frame, MSetCommand, SetCommand},
 };
 
-impl CommandAofExchange for SetCommand {
-    async fn execute_aof<'a>(
+impl AofEncoder for SetCommand {
+    async fn encode_aof<'a>(
         &self,
         // 2. 将这个生命周期 'ctx 应用到 CommandContext 的引用上
         ctx: AofContent<'a>,
@@ -44,10 +44,10 @@ impl CommandAofExchange for SetCommand {
     }
 }
 
-use crate::domain::MSetCommand;
 
-impl CommandAofExchange for MSetCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+
+impl AofEncoder for MSetCommand {
+    async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let mut frame_vec = vec![crate::error::Frame::Bulk(Bytes::from_static(b"MSET"))];
         for (key, val) in &self.keys_and_values {
             frame_vec.push(crate::error::Frame::Bulk(Bytes::copy_from_slice(key.as_bytes())));

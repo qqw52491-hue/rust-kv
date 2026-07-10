@@ -1,8 +1,8 @@
-use crate::aof_exchange::{AofContent, CommandAofExchange};
+use crate::aof_encoder::{AofContent, AofEncoder};
 use crate::domain::{HSetCommand, HDelCommand};
 
-impl CommandAofExchange for HSetCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+impl AofEncoder for HSetCommand {
+    async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let mut buf = Vec::new();
         // * (1 + 1 + field_values.len() * 2)
         let total_parts = 2 + self.field_values.len() * 2;
@@ -23,8 +23,8 @@ impl CommandAofExchange for HSetCommand {
     }
 }
 
-impl CommandAofExchange for HDelCommand {
-    async fn execute_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
+impl AofEncoder for HDelCommand {
+    async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let mut buf = Vec::new();
         // * (1 + 1 + fields.len())
         let total_parts = 2 + self.fields.len();

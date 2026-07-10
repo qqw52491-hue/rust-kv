@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use crate::{
-    command_execute::{CommandContext, CommandExecutor, parse_int_from_bytes},
+    executor::{CommandContext, Executor, parse_int_from_bytes},
     db::LockedDb,
     db::eviction::traits::KvOperator,
     error::{Frame, KvError, HSetCommand, HGetCommand, HDelCommand},
     types::{Element, Value, ValueEntry},
 };
 
-impl CommandExecutor for HSetCommand {
+impl Executor for HSetCommand {
     async fn execute(
         &self,
         ctx: CommandContext,
@@ -57,7 +57,7 @@ impl CommandExecutor for HSetCommand {
     }
 }
 
-impl CommandExecutor for HGetCommand {
+impl Executor for HGetCommand {
     async fn execute(
         &self,
         ctx: CommandContext,
@@ -88,7 +88,7 @@ impl CommandExecutor for HGetCommand {
     }
 }
 
-impl CommandExecutor for HDelCommand {
+impl Executor for HDelCommand {
     async fn execute(
         &self,
         ctx: CommandContext,

@@ -1,14 +1,14 @@
 use bytes::Bytes;
 
 use crate::{
-    command_execute::{CommandContext, CommandExecutor},
+    executor::{CommandContext, Executor},
     context::{CONN_STATE, ConnectionState},
     db::LockedDb,
     error::{EvalCommand, ExecCommand, Frame, KvError, MultiCommand, PingCommand, UnimplementCommand},
     lua::lua_work::LuaTask,
 };
 use tokio::sync::oneshot;
-impl CommandExecutor for PingCommand {
+impl Executor for PingCommand {
     async fn execute(
         &self,
         _ctx: CommandContext,
@@ -21,7 +21,7 @@ impl CommandExecutor for PingCommand {
     }
 }
 
-impl CommandExecutor for UnimplementCommand {
+impl Executor for UnimplementCommand {
     async fn execute(
         &self,
         _ctx: CommandContext,
@@ -36,7 +36,7 @@ impl CommandExecutor for UnimplementCommand {
 /*
 这个是比较特殊的执行层
 */
-impl CommandExecutor for EvalCommand {
+impl Executor for EvalCommand {
     async fn execute(
         &self,
         ctx: CommandContext,
@@ -95,13 +95,13 @@ impl CommandExecutor for EvalCommand {
     }
 }
 
-impl CommandExecutor for MultiCommand {
+impl Executor for MultiCommand {
     async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
         Ok(Frame::Null)
     }
 }
 
-impl CommandExecutor for ExecCommand {
+impl Executor for ExecCommand {
     async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
         Ok(Frame::Null)
     }

@@ -1,6 +1,6 @@
-mod aof_exchange;
-mod command_exchange;
-mod command_execute;
+mod aof_encoder;
+mod parser;
+mod executor;
 mod config;
 mod context;
 mod core_aof;
@@ -192,7 +192,7 @@ pub async fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command_execute::{CommandContext, CommandExecutor};
+    use crate::executor::{CommandContext, Executor};
     use crate::context::{CONN_STATE, ConnectionState};
     use crate::db::Db;
     use crate::error::{Command, Frame};
