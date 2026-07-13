@@ -24,6 +24,11 @@ pub enum Command {
     MultiGroup(Vec<Command>),
     JsonSet(JsonSetCommand),
     JsonGet(JsonGetCommand),
+    ZAdd(ZAddCommand),
+    ZScore(ZScoreCommand),
+    ZRank(ZRankCommand),
+    ZRange(ZRangeCommand),
+    ZRem(ZRemCommand),
 }
 
 // ─────────────────────────────────────────────
@@ -125,6 +130,38 @@ pub struct JsonGetCommand {
     pub path: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ZAddCommand {
+    pub key: Arc<String>,
+    pub score: f64,
+    pub member: bytes::Bytes,
+}
+
+#[derive(Debug, Clone)]
+pub struct ZScoreCommand {
+    pub key: Arc<String>,
+    pub member: bytes::Bytes,
+}
+
+#[derive(Debug, Clone)]
+pub struct ZRankCommand {
+    pub key: Arc<String>,
+    pub member: bytes::Bytes,
+}
+
+#[derive(Debug, Clone)]
+pub struct ZRangeCommand {
+    pub key: Arc<String>,
+    pub start: isize,
+    pub stop: isize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ZRemCommand {
+    pub key: Arc<String>,
+    pub member: bytes::Bytes,
+}
+
 // ─────────────────────────────────────────────
 // 辅助类型：SET 命令专属
 // ─────────────────────────────────────────────
@@ -177,6 +214,11 @@ impl Command {
             Command::MultiGroup(_) => LockSpec::None,
             Command::JsonSet(c) => LockSpec::Write(&c.key),
             Command::JsonGet(c) => LockSpec::Read(&c.key),
+            Command::ZAdd(c) => LockSpec::Write(&c.key),
+            Command::ZScore(c) => LockSpec::Read(&c.key),
+            Command::ZRank(c) => LockSpec::Read(&c.key),
+            Command::ZRange(c) => LockSpec::Read(&c.key),
+            Command::ZRem(c) => LockSpec::Write(&c.key),
         }
     }
 

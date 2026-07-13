@@ -6,6 +6,7 @@ mod generic;
 mod hash;
 mod list;
 mod string;
+pub mod zset;
 
 use crate::{
     config::EvictionType,

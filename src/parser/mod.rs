@@ -6,6 +6,7 @@ use crate::error::{Command, Frame, KvError};
 mod common;
 pub mod string;
 pub mod json;
+pub mod zset;
 mod list;
 mod hash;
 /// 尝试从一个 Frame 中提取出 Bulk String 并转换为 String

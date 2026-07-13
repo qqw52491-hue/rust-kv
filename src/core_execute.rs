@@ -29,7 +29,8 @@ impl Executor for Command {
         delegate_execute!(self, ctx, [
             Get, Set, Ping, Unimplement, EvalCommand,
             LPush, LPop, BLPop, HSet, HGet, HDel, MSet, MGet, Multi, Exec, MultiGroup,
-            JsonSet, JsonGet
+            JsonSet, JsonGet,
+            ZAdd, ZScore, ZRank, ZRange, ZRem
         ])
     }
 }

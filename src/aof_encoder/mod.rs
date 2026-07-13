@@ -9,6 +9,7 @@ mod string;
 mod list;
 mod hash;
 mod json;
+mod zset;
 
 pub trait AofEncoder {
     // encode_aof 方法現在接收 AofContent 作為參數！
@@ -34,9 +35,14 @@ impl Command {
             Command::HSet(hset_command) => hset_command.encode_aof(ctx).await,
             Command::HDel(hdel_command) => hdel_command.encode_aof(ctx).await,
             Command::JsonSet(c) => c.encode_aof(ctx).await,
+            Command::ZAdd(c) => c.encode_aof(ctx).await,
+            Command::ZRem(c) => c.encode_aof(ctx).await,
             Command::Get(_)
             | Command::HGet(_)
             | Command::JsonGet(_)
+            | Command::ZScore(_)
+            | Command::ZRank(_)
+            | Command::ZRange(_)
             | Command::Ping(_)
             | Command::Unimplement(_)
             | Command::MGet(_)
@@ -60,6 +66,8 @@ impl Command {
                         Command::HDel(c) => c.encode_aof(dummy_ctx).await,
                         Command::MSet(c) => c.encode_aof(dummy_ctx).await,
                         Command::JsonSet(c) => c.encode_aof(dummy_ctx).await,
+                        Command::ZAdd(c) => c.encode_aof(dummy_ctx).await,
+                        Command::ZRem(c) => c.encode_aof(dummy_ctx).await,
                         _ => Ok(()),
                     };
                     while let Ok(msg) = dummy_rx.try_recv() {

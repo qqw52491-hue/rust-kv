@@ -99,6 +99,36 @@ impl TryFrom<Frame> for Command {
                         }
                         crate::domain::command::JsonGetCommand::parse(iter, command_name)
                     }
+                    "ZADD" => {
+                        if length != 4 {
+                            return Err(ProtocolError("ZADD 命令需要 3 个参数".into()));
+                        }
+                        crate::domain::command::ZAddCommand::parse(iter, command_name)
+                    }
+                    "ZSCORE" => {
+                        if length != 3 {
+                            return Err(ProtocolError("ZSCORE 命令需要 2 个参数".into()));
+                        }
+                        crate::domain::command::ZScoreCommand::parse(iter, command_name)
+                    }
+                    "ZRANK" => {
+                        if length != 3 {
+                            return Err(ProtocolError("ZRANK 命令需要 2 个参数".into()));
+                        }
+                        crate::domain::command::ZRankCommand::parse(iter, command_name)
+                    }
+                    "ZRANGE" => {
+                        if length != 4 {
+                            return Err(ProtocolError("ZRANGE 命令需要 3 个参数".into()));
+                        }
+                        crate::domain::command::ZRangeCommand::parse(iter, command_name)
+                    }
+                    "ZREM" => {
+                        if length != 3 {
+                            return Err(ProtocolError("ZREM 命令需要 2 个参数".into()));
+                        }
+                        crate::domain::command::ZRemCommand::parse(iter, command_name)
+                    }
                     "PING" => PingCommand::parse(iter, command_name),
                     "MULTI" => Ok(Command::Multi(crate::domain::command::MultiCommand {})),
                     "EXEC" => Ok(Command::Exec(crate::domain::command::ExecCommand {})),
