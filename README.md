@@ -72,3 +72,25 @@
 * **类型颠覆:** 在底层内存直接以 `serde_json::Value` 树形结构存储，将 JSON 提升为与 String/List 同等的一等公民。
 * **原生 JSON Pointer 标准支持:** 严格遵循 IETF **RFC 6901** 标准，支持通过 `/address/city` 等路径规范直接访问内部叶子节点，彻底解决 `.` 分割路径带来的转义和解析歧义。
 * **$O(D)$ 极速原地修改:** 引擎在收到长路径修改指令（如 `JSON.SET user:1 /age 26`）时，借助标准库 `pointer_mut` 的极致优化，仅需 $O(层级深度)$ 的微小开销即可在内存中实现精准原地替换。相比于传统 "GET -> 反序列化 -> 修改 -> 序列化 -> SET" 模式，网络 I/O 节省近 99%，并结合细粒度写锁彻底消灭并发更新覆盖 (Lost Update) 的死局。
+
+## 📦 已支持的命令 (Supported Commands)
+
+目前 Rust-KV 已经实现并支持了以下核心命令集：
+
+### 1. 字符串 (String)
+* `SET` / `GET`
+* `MSET` / `MGET` (批量操作)
+
+### 2. 列表 (List)
+* `LPUSH` / `LPOP`
+* **`BLPOP` (阻塞式弹出)**: 支持客户端在列表为空时安全阻塞等待，直到有新元素被 push 或超时，这是实现高性能消息队列的基础。
+
+### 3. 哈希表 (Hash)
+* `HSET` / `HGET` / `HDEL`
+
+### 4. 有序集合 (Sorted Set / ZSet)
+* `ZADD` / `ZSCORE` / `ZRANK` / `ZRANGE` / `ZREM`
+
+### 5. 原生 JSON (Native JSON)
+* **`JSON.SET`**: 支持按照 JSON Pointer 规范直接更新或创建内存中的 JSON 树节点。
+* **`JSON.GET`**: 支持按照 JSON Pointer 规范提取局部 JSON 节点。
