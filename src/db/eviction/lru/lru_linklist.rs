@@ -36,6 +36,11 @@ impl LruList {
             len: 0,
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.head.is_none()
+    }
+
     //这个是直接添加到末尾
     pub fn push_back(&mut self, key: Arc<String>) -> NonNull<Node> {
         let new_node = Node::new(key);
@@ -100,6 +105,13 @@ impl LruList {
         self.tail = Some(node_ptr);
     }
 
+    pub fn peek_front(&self) -> Option<Arc<String>> {
+        if let Some(head) = self.head {
+            unsafe { Some((*head.as_ptr()).key.clone()) }
+        } else {
+            None
+        }
+    }
 
     //删除头节点 并返回头节点的key
     pub fn pop_front(&mut self) -> Option<Arc<String>> {

@@ -1,12 +1,12 @@
 use std::vec::IntoIter;
 
 use crate::{
-    command_exchange::{CommandExchange, extract_bulk_string},
+    parser::{extract_bulk_string, Parser},
     error::{Command, EvalCommand, Frame, KvError, PingCommand, UnimplementCommand},
 };
 
-impl CommandExchange for PingCommand {
-    fn exchange(
+impl Parser for PingCommand {
+    fn parse(
         mut itor: std::vec::IntoIter<Frame>,
         _command_name: String,
     ) -> Result<Command, KvError> {
@@ -25,8 +25,8 @@ impl CommandExchange for PingCommand {
     }
 }
 
-impl CommandExchange for UnimplementCommand {
-    fn exchange(
+impl Parser for UnimplementCommand {
+    fn parse(
         itor: std::vec::IntoIter<Frame>,
         command_name: String,
     ) -> Result<crate::error::Command, crate::error::KvError> {
@@ -44,8 +44,8 @@ impl CommandExchange for UnimplementCommand {
     }
 }
 
-impl CommandExchange for EvalCommand {
-    fn exchange(mut itor: IntoIter<Frame>, command_name: String) -> Result<Command, KvError> {
+impl Parser for EvalCommand {
+    fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
         //第一步 就是现实提取脚本字符串
         let script_frame = itor.next();
         let script = extract_bulk_string(script_frame)?;

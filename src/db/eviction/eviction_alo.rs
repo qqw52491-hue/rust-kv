@@ -1,6 +1,4 @@
-use std::{
-    cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Duration, u32, usize
-};
+use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Duration, u32, usize};
 
 use rand::Rng;
 use tokio::{sync::Mutex, time::Instant};
@@ -9,7 +7,10 @@ const EVICTION_MAX_NUMBER: usize = 5;
 
 use crate::{
     core_time::get_cached_time_ms,
-    db::{Storage, eviction::{LockOwner, MemoryCache, NUM_SHARDS}},
+    db::{
+        Storage,
+        eviction::{LockOwner, MemoryCache, NUM_SHARDS, traits::KvOperator},
+    },
 };
 
 impl Storage {
@@ -42,33 +43,54 @@ impl Storage {
                 continue;
             }
 
-            let mut keys_check = 20;
+            let time_budget = Duration::from_millis(20);
+            let start_stopwatch = std::time::Instant::now();
 
-            while keys_check > 0 && !active_shards.is_empty() {
-                // 5. 从“活跃分片列表”中随机挑一个
-                let random_active_index = rand::thread_rng().gen_range(0..active_shards.len());
-                let (db_index, shard_index) = active_shards[random_active_index];
-                //抽取后获取锁
-                let mut shard = self.get_lock_write(db_index, shard_index).await;
-                //获取锁后再次判断 如果没有数据就跳过了
-                if shard.get_memory_usage() == 0 {
-                    //说明这个分片已经没有数据了
-                    active_shards.swap_remove(random_active_index);
-                    continue;
-                }
-                let key = shard.get_eviction_policy().await.unwrap().get_random_sample_key().unwrap();
-                if let Some(value) = shard.select(&key).await {
-                    if let Some(expire_time) = value.expires_at {
-                        if get_cached_time_ms() > expire_time {
-                            //更新分片和整体内存数据
-                            let data_size = value.data_size;
-                            shard.add_memory(data_size);
-                            //调用方法删除
-                            let _ = shard.get_eviction_policy().await.unwrap().on_delete(key);
+            // 动态频率抽样：如果这一批发现很多过期的，说明库里过期数据很多，那就别睡了，继续连轴转！
+            loop {
+                let mut keys_check = 20;
+                let mut expired_count = 0;
+
+                while keys_check > 0 && !active_shards.is_empty() {
+                    // 5. 从“活跃分片列表”中随机挑一个
+                    let random_active_index = rand::thread_rng().gen_range(0..active_shards.len());
+                    let (db_index, shard_index) = active_shards[random_active_index];
+                    //抽取后获取锁
+                    let mut shard = self.get_lock_write(db_index, shard_index).await;
+                    //获取锁后再次判断 如果没有数据就跳过了
+                    if shard.get_memory_usage() == 0 {
+                        //说明这个分片已经没有数据了
+                        active_shards.swap_remove(random_active_index);
+                        continue;
+                    }
+                    // 提取到单独的变量，让 get_eviction_policy 返回的 MutexGuard 及时释放，避免借用冲突
+                    let key_opt = shard.get_eviction_policy().unwrap().get_random_sample_key();
+                    if let Some(key) = key_opt {
+                        if let Some(value) = shard.select(&key) {
+                            if let Some(expire_time) = value.expires_at {
+                                if get_cached_time_ms() > expire_time {
+                                    // 调用统一的 delete 方法，内部会处理内存和 LRU 移除
+                                    shard.delete(&key);
+                                    expired_count += 1;
+                                }
+                            }
                         }
                     }
+                    keys_check -= 1;
                 }
-                keys_check -= 1;
+
+                // 如果过期率低于 25%（20 个里不到 5 个），说明库里过期数据不多了，正常下班休息 100ms
+                if expired_count < 5 {
+                    break;
+                }
+
+                // 如果过期率极高，继续循环狂删！但为了防止霸占 Tokio 线程，强行让出一次 CPU
+                tokio::task::yield_now().await;
+
+                // 为了防止被无限期卡死（比如用户不断塞入已过期的数据），设定 20ms 强制下班阈值
+                if start_stopwatch.elapsed() > time_budget {
+                    break;
+                }
             }
         }
     }
@@ -85,22 +107,34 @@ impl Storage {
         //定时任务接收者
         loop {
             let mut shutdown = shutdown_clone.clone().subscribe();
-            //如果通知来了 就会下次循环会直接break
-            tokio::select! {
-                _ = shutdown.recv() =>{
-                    break;
-                },
-                _ = tokio::time::sleep(Duration::from_millis(100)) =>{
+            let is_over_memory = crate::db::eviction::GLOBAL_MEMORY
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > target_memory;
 
+            if !is_over_memory {
+                // 如果内存健康，休眠 100ms 慢慢巡逻
+                tokio::select! {
+                    _ = shutdown.recv() =>{
+                        break;
+                    },
+                    _ = tokio::time::sleep(Duration::from_millis(100)) =>{
+
+                    }
+                }
+            } else {
+                // 如果内存溢出，不要休眠！只需无阻塞检查一下是否关机，然后立刻去清理
+                if let Ok(_) = shutdown.try_recv() {
+                    break;
                 }
             }
-            if Storage::get_global_memory_can_move(&self,target_memory).await {
+
+            if is_over_memory {
                 //根据指标挑选前五的分片
                 let mut shard_indices: BinaryHeap<Reverse<(usize, usize, usize)>> =
                     BinaryHeap::with_capacity(EVICTION_MAX_NUMBER);
                 for db_index in 0..16 {
                     for shard_index in 0..NUM_SHARDS {
-                        let shard =  self.get_lock_read(db_index, shard_index).await;
+                        let shard = self.get_lock_read(db_index, shard_index).await;
                         let memory = shard.get_memory_usage();
                         //跳过为空的
                         if memory == 0 {
@@ -114,92 +148,81 @@ impl Storage {
                         shard_indices.push(item_for_heap);
                     }
                 }
+                let mut handles = Vec::new();
                 for item in shard_indices {
                     //每次循环都需要克隆
                     let shutdown_clone = shutdown_tx.clone();
                     let (_, db_index, shard_index) = item.0;
-                    //先获取锁 然后执行指定的时间段
-                    let mut shard_lock = self.get_lock_read(db_index, shard_index).await;
                     let store: Arc<Vec<Arc<MemoryCache>>> = self.store.clone();
                     // 内存超了，开一个任务
                     let task_delete = tokio::spawn(async move {
-                        //let mut shard_lock = shard.await;
-                        let mut processed_count = 0;
-                        //设置开始时间
                         let start_stopwatch = Instant::now();
-                        let time_budget = Duration::from_millis(10);
+                        let time_budget = Duration::from_millis(20);
                         loop {
                             let mut shutdown = shutdown_clone.clone().subscribe();
-                            //如果通知来了 就会下次循环会直接break
-                            tokio::select! {
-                                _ = shutdown.recv() =>{
-                                    break;
-                                },
-                                _ = tokio::time::sleep(Duration::from_millis(100)) =>{
-
-                                }
+                            if let Ok(_) = shutdown.try_recv() {
+                                break;
                             }
-                            //再次精确判断 锁内部判断就完全没有问题了
-                            if Storage::get_global_memory_not_move(store.clone(),target_memory).await {
-                                let key = shard_lock.get_eviction_policy().await.unwrap().pop_victim();
+                            if crate::db::eviction::GLOBAL_MEMORY
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                                <= target_memory
+                            {
+                                break;
+                            }
+
+                            // 在循环内部获取【写锁】，这样不会长期阻塞整个分片
+                            let shard_lock_guard = store[db_index].message[shard_index]
+                                .clone()
+                                .write_owned()
+                                .await;
+                            let mut shard_operator: Box<dyn crate::db::eviction::LockOwner> =
+                                Box::new(crate::db::eviction::DirectCacheNode::Writeguard(
+                                    shard_lock_guard,
+                                ));
+
+                            let mut deleted_in_batch = 0;
+                            // 将批量删除提高到 200，减少 yield 带来的 tokio 上下文切换开销
+                            while deleted_in_batch < 200
+                                && crate::db::eviction::GLOBAL_MEMORY
+                                    .load(std::sync::atomic::Ordering::Relaxed)
+                                    > target_memory
+                            {
+                                let key =
+                                    shard_operator.get_eviction_policy().unwrap().pop_victim();
                                 if let Some(key) = key {
-                                    let data_size =
-                                        shard_lock.select(&key).await.unwrap().data_size;
-                                    shard_lock.get_eviction_policy().await.unwrap().on_delete(key);
-                                    //现在删除内存更新分片和全局内存数据
-                                    shard_lock.sub_memory(data_size);
-                                    processed_count += 1;
+                                    // 统一的 delete 方法会搞定 LRU 链表和内存记账
+                                    shard_operator.delete(&key);
+                                    deleted_in_batch += 1;
                                 } else {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
-                            //精准判断时间
-                            if processed_count % 10 == 0 {
-                                if start_stopwatch.elapsed() > time_budget {
-                                    break;
-                                }
+
+                            // 主动让出 CPU 给其他任务
+                            tokio::task::yield_now().await;
+
+                            if deleted_in_batch == 0 {
+                                break; // 这个分片已经没东西可删了
+                            }
+
+                            // 精准判断时间
+                            if start_stopwatch.elapsed() > time_budget {
+                                break;
                             }
                         }
                     });
-                    task_vec_clone.lock().await.push(task_delete);
+                    handles.push(task_delete);
+                }
+
+                // 【关键修复】等待这批清理任务执行完毕！
+                // 否则如果内存没降下来，下一次 100ms 循环又会 spawn 5 个新任务
+                // 导致任务无限爆炸，最终耗尽 CPU 资源，让 SET 性能衰减到冰点
+                for handle in handles {
+                    let _ = handle.await;
                 }
             }
         }
         task_vec
     }
-    //这个异步方法确实不错
-    //通过计算获取全局数据总和 
-    //锁资源一定要精确计算获取
-    pub async fn get_global_memory_can_move(&self,max_size:usize) -> bool {
-        let mut global_memory = 0;
-        //这个是通过计算每个分片获取数据
-        for db_index in 0..16 {
-            for shard_index in 0..NUM_SHARDS {
-                let shard_lock = self.get_lock_read(db_index, shard_index).await;
-                global_memory += shard_lock.as_lock_owner().unwrap().get_memory_usage();
-                if global_memory > max_size {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    //self 一定不能move 这个还是最基本的在循环里
-    pub async fn get_global_memory_not_move(store: Arc<Vec<Arc<MemoryCache>>>,max_size:usize) -> bool {
-        let mut global_memory = 0;
-        //这个是通过计算每个分片获取数据
-        for db_index in 0..16 {
-            for shard_index in 0..NUM_SHARDS {
-                let shard_lock = store[db_index].message[shard_index].clone().read_owned().await;
-                global_memory += shard_lock.get_memory_usage();
-                if global_memory > max_size {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
+    //移除了容易导致死锁的 get_global_memory_can_move 和 get_global_memory_not_move
 }

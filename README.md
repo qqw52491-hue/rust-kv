@@ -6,13 +6,15 @@
 
 ## 🚀 极致性能 (Performance Benchmark)
 
-基于 Mac本地回环测试，使用工业级压测工具 `memtier_benchmark` (开启多线程 + Pipeline) 测得：
+基于 Linux 环境本地回环测试，使用 `redis-benchmark` 工具（100万纯随机 Key，Pipeline=32，连接数 50）与原生 Redis 进行了极限吞吐量对比测试：
 
-| 测试场景 (Benchmark Scenario) | QPS (Requests/sec) | 核心优势与瓶颈分析 |
-| :--- | :--- | :--- |
-| **混合读写 (Mixed SET/GET)** | **1,000,000+** | **百万级吞吐！** 4线程并发彻底释放多核性能，Actor 模型无锁调度成为关键 |
-| **纯内存读取 (GET)** | **630,000+** | **Sharded SwissTable** 结合零拷贝解析 (Zero-Copy)，极致利用 CPU L1/L2 缓存 |
-| **纯内存写入 (SET)** | **450,000+** | **多队列分片** 配合 Group Commit 策略，在高并发写入下完美消除锁竞争 |
+| 测试场景 (100万随机Key) | 原生 Redis (6379) | Rust-KV (6380) | 核心优势与突破点 |
+| :--- | :--- | :--- | :--- |
+| **纯内存读取 (GET)** | 1,654,533 RPS (0.88ms) | **1,655,081 RPS** (0.87ms) | **多核无锁读并发！** 多线程结合 1024 个 Shard 分段读锁 (`RwLock::read`)，彻底释放多核并发能力。 |
+| **纯内存写入 (SET)** | 773,874 RPS (1.87ms) | **1,093,135 RPS** (1.31ms) | **领先原生 Redis 超 31 万 RPS！** 64字节缓存行对齐 (`#[repr(align(64))]`) + 细粒度分片写锁，彻底打破单核写入物理瓶颈。 |
+| **极限内存淘汰 (Eviction)** | 177,904 RPS (非 Pipeline) | **186,699 RPS** (非 Pipeline) | **极速无阻塞垃圾回收！** 在内存被打满 (80MB) 触发高频淘汰时，后台异步清理任务完美削峰，SET 性能死死咬住 18.6万 RPS 毫无衰减！ |
+| **混合读写 (Mixed)** | **-** | **1,000,000+ RPS** | Actor 模型无锁调度，结合 4 线程并发解析，消除多路复用网络解析瓶颈。 |
+
 
 > **复现指令参考:**
 >
@@ -56,5 +58,39 @@
 
 ### 5. 健壮的工程化实现
 * **优雅停机 (Graceful Shutdown):** 基于 `broadcast` 通道实现的双层停机（应用层 -> 基础设施层），确保在服务关闭前，所有挂起的 AOF 数据都被刷入磁盘，数据零丢失。
-* **Unsafe 手写 LRU:** 为了追求极致的 `O(1)` 淘汰性能，使用 `NonNull` 裸指针手写双向链表，结合 `HashMap` 索引，实现了生产级的 LRU 淘汰算法。
 * **零拷贝协议解析:** 基于 `bytes::BytesMut` 和 `Cursor` 实现的 RESP 解析器，在解析过程中零内存分配。
+
+### 6. 无阻塞异步垃圾回收 (Zero-Blocking GC)
+在高频写入导致内存溢出时，传统的同步淘汰会严重阻塞网络请求，本项目实现了极速的异步淘汰引擎：
+* **动态平滑调度:** 后台巡逻任务监控全局原子内存 (`GLOBAL_MEMORY`)。健康时休眠让出 CPU；溢出时 0 延时立刻启动清理。
+* **微创切片清理 (Time-Sliced Eviction):** 将海量淘汰任务切分为 20ms 的时间片，每处理 200 个 Key 主动 `yield_now().await` 让出 Tokio 上下文，彻底杜绝 GC 任务引发的协程饥饿 (Starvation)。
+* **安全高效的淘汰操作:** 通过向底层分片获取瞬时写锁 (`Writeguard`) 并复用统一的高内聚 `delete` 接口，原子性地完成 HashMap 删除、LRU 链表解绑和全局内存扣减。在 100 万级请求轰炸下依然保持内存与数据的绝对一致。
+* **Unsafe 手写 O(1) LRU:** 为了追求极致的淘汰性能，使用 `NonNull` 裸指针手写双向链表，结合 `HashMap` 索引，实现了工业级的极速 LRU 算法。
+
+### 7. 原生 JSON 存储与 JSON Pointer 解析
+彻底告别传统 KV 存储中 JSON 需要序列化/反序列化带来的巨大性能与网络开销。
+* **类型颠覆:** 在底层内存直接以 `serde_json::Value` 树形结构存储，将 JSON 提升为与 String/List 同等的一等公民。
+* **原生 JSON Pointer 标准支持:** 严格遵循 IETF **RFC 6901** 标准，支持通过 `/address/city` 等路径规范直接访问内部叶子节点，彻底解决 `.` 分割路径带来的转义和解析歧义。
+* **$O(D)$ 极速原地修改:** 引擎在收到长路径修改指令（如 `JSON.SET user:1 /age 26`）时，借助标准库 `pointer_mut` 的极致优化，仅需 $O(层级深度)$ 的微小开销即可在内存中实现精准原地替换。相比于传统 "GET -> 反序列化 -> 修改 -> 序列化 -> SET" 模式，网络 I/O 节省近 99%，并结合细粒度写锁彻底消灭并发更新覆盖 (Lost Update) 的死局。
+
+## 📦 已支持的命令 (Supported Commands)
+
+目前 Rust-KV 已经实现并支持了以下核心命令集：
+
+### 1. 字符串 (String)
+* `SET` / `GET`
+* `MSET` / `MGET` (批量操作)
+
+### 2. 列表 (List)
+* `LPUSH` / `LPOP`
+* **`BLPOP` (阻塞式弹出)**: 支持客户端在列表为空时安全阻塞等待，直到有新元素被 push 或超时，这是实现高性能消息队列的基础。
+
+### 3. 哈希表 (Hash)
+* `HSET` / `HGET` / `HDEL`
+
+### 4. 有序集合 (Sorted Set / ZSet)
+* `ZADD` / `ZSCORE` / `ZRANK` / `ZRANGE` / `ZREM`
+
+### 5. 原生 JSON (Native JSON)
+* **`JSON.SET`**: 支持按照 JSON Pointer 规范直接更新或创建内存中的 JSON 树节点。
+* **`JSON.GET`**: 支持按照 JSON Pointer 规范提取局部 JSON 节点。

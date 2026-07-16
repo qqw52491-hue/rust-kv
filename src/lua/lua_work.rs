@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, sync::Arc, thread};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::{
-    command_execute::CommandContext,
+    executor::CommandContext,
     context::{CONN_STATE, ConnectionContent, ConnectionState},
     db::{Db, LockedDb},
     error::{EvalCommand, Frame, KvError},
@@ -20,9 +20,10 @@ pub struct LuaTask {
 
 // 这里啊是为了提前操作lua 所以需要的结构
 pub struct CurrentRequestEnv {
-    pub ctx: CommandContext, // 你的环境            // 你的环境
+    pub ctx: CommandContext, // 你的环境
     pub sessions: Arc<Mutex<HashMap<usize, LockedDb>>>, // 你的锁 (直接用 HashMap，不需要 Arc Mutex)
     pub command: EvalCommand,
+    pub lua_aof_buffer: Vec<crate::error::Command>, // 【新增】存放执行成功的命令，用于 AOF 效果同步
 }
 
 thread_local! {
@@ -32,7 +33,7 @@ thread_local! {
 #[derive(Clone)]
 pub struct LuaRouter {
     // 存放所有工人的通道
-    senders: Vec<mpsc::Sender<LuaTask>>,
+    pub senders: Vec<mpsc::Sender<LuaTask>>,
 }
 
 impl LuaRouter {

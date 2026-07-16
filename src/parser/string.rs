@@ -1,9 +1,9 @@
 use std::{sync::Arc, vec::IntoIter};
 
-use crate::{command_exchange::{extract_bulk_bytes, extract_bulk_integer, extract_bulk_string, CommandExchange}, error::{Command, Expiration, Frame, GetCommand, KvError, SetCommand, SetCondition}};
+use crate::{parser::{extract_bulk_bytes, extract_bulk_integer, extract_bulk_string, Parser}, error::{Command, Expiration, Frame, GetCommand, KvError, SetCommand, SetCondition}};
 
-impl CommandExchange for SetCommand {
-     fn exchange( mut itor: IntoIter<Frame>,_command_name:String) -> Result<Command, KvError> {
+impl Parser for SetCommand {
+     fn parse( mut itor: IntoIter<Frame>,_command_name:String) -> Result<Command, KvError> {
         let key = extract_bulk_string(itor.next())?;
         let value = extract_bulk_bytes(itor.next())?;
         let mut expiration: Option<Expiration> = None;
@@ -80,10 +80,42 @@ impl CommandExchange for SetCommand {
     }
 }
 
-impl CommandExchange for GetCommand {
-    fn exchange(mut itor: IntoIter<Frame>,_command_name:String) -> Result<Command, KvError> {
+impl Parser for GetCommand {
+    fn parse(mut itor: IntoIter<Frame>,_command_name:String) -> Result<Command, KvError> {
         let key = extract_bulk_string(itor.next())?;
         Ok(Command::Get(GetCommand { key :Arc::new(key) }))
     }
-    
+}
+
+use crate::domain::MSetCommand;
+use crate::domain::MGetCommand;
+
+impl Parser for MSetCommand {
+    fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
+        let mut keys_and_values = Vec::new();
+        while let Ok(key) = extract_bulk_string(itor.next()) {
+            if let Ok(value) = extract_bulk_bytes(itor.next()) {
+                keys_and_values.push((Arc::new(key), value));
+            } else {
+                return Err(KvError::ProtocolError("mset value 缺失".into()));
+            }
+        }
+        if keys_and_values.is_empty() {
+            return Err(KvError::ProtocolError("mset 参数错误".into()));
+        }
+        Ok(Command::MSet(MSetCommand { keys_and_values }))
+    }
+}
+
+impl Parser for MGetCommand {
+    fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
+        let mut keys = Vec::new();
+        while let Ok(key) = extract_bulk_string(itor.next()) {
+            keys.push(Arc::new(key));
+        }
+        if keys.is_empty() {
+            return Err(KvError::ProtocolError("mget 参数错误".into()));
+        }
+        Ok(Command::MGet(MGetCommand { keys }))
+    }
 }

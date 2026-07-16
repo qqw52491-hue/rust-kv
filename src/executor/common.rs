@@ -1,18 +1,17 @@
 use bytes::Bytes;
 
 use crate::{
-    command_execute::{CommandContext, CommandExecutor},
+    executor::{CommandContext, Executor},
     context::{CONN_STATE, ConnectionState},
     db::LockedDb,
-    error::{EvalCommand, Frame, KvError, PingCommand, UnimplementCommand},
+    error::{EvalCommand, ExecCommand, Frame, KvError, MultiCommand, PingCommand, UnimplementCommand},
     lua::lua_work::LuaTask,
 };
 use tokio::sync::oneshot;
-impl CommandExecutor for PingCommand {
+impl Executor for PingCommand {
     async fn execute(
         &self,
         _ctx: CommandContext,
-        db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
         if let Some(value) = &self.value {
             Ok(Frame::Bulk(Bytes::from(value.clone())))
@@ -22,12 +21,10 @@ impl CommandExecutor for PingCommand {
     }
 }
 
-impl CommandExecutor for UnimplementCommand {
+impl Executor for UnimplementCommand {
     async fn execute(
         &self,
-        // 2. 将这个生命周期 'ctx 应用到 CommandContext 的引用上
         _ctx: CommandContext,
-        db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
         Ok(Frame::Error(format!(
             "ERR unknown command '{}'",
@@ -39,11 +36,10 @@ impl CommandExecutor for UnimplementCommand {
 /*
 这个是比较特殊的执行层
 */
-impl CommandExecutor for EvalCommand {
+impl Executor for EvalCommand {
     async fn execute(
         &self,
         ctx: CommandContext,
-        _db_lock: Option<&mut LockedDb>,
     ) -> Result<Frame, KvError> {
         //   let result =   self.lua_vm_redis_call(
         // CommandContext {
@@ -51,7 +47,10 @@ impl CommandExecutor for EvalCommand {
         //     connect_content: ctx.connect_content.clone(),
         // }).await; // 直接 await！
         //现在我复制了这个链接
-        let content = ctx.connect_content.clone().unwrap().clone();
+        let content = match &ctx {
+            CommandContext::Normal { connect_content, .. } => connect_content.clone(),
+            _ => return Err(KvError::ProtocolError("Eval can only run in a normal client context".to_string())),
+        };
 
         // 这里的 Result<Frame, KvError> 就是你要通过信封回传的数据类型
         let (tx, rx) = oneshot::channel::<Result<Frame, KvError>>();
@@ -93,5 +92,17 @@ impl CommandExecutor for EvalCommand {
             }
         };
         result
+    }
+}
+
+impl Executor for MultiCommand {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
+        Ok(Frame::Null)
+    }
+}
+
+impl Executor for ExecCommand {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
+        Ok(Frame::Null)
     }
 }
