@@ -1,13 +1,13 @@
 use bytes::Bytes;
 
 use crate::{
+    db::LockedDb,
+    db::eviction::traits::KvOperator,
+    error::{Frame, GetCommand, KvError, SetCommand},
     executor::{
         CommandContext, Executor, bytes_to_i64_fast, calculate_expiration_timestamp_ms,
         parse_int_from_bytes,
     },
-    db::LockedDb,
-    db::eviction::traits::KvOperator,
-    error::{Frame, GetCommand, KvError, SetCommand},
     types::{Element, Value, ValueEntry},
 };
 
@@ -33,7 +33,7 @@ impl Executor for SetCommand {
             let mut own_lock;
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
-            
+
             // Check NX / XX condition
             if let Some(condition) = &self.condition {
                 let exists = map.select(&self.key).is_some();
@@ -47,7 +47,7 @@ impl Executor for SetCommand {
                     _ => {}
                 }
             }
-            
+
             map.insert(self.key.clone(), value_obj);
 
             ctx.send_aof(&crate::error::Command::Set(self.clone()))

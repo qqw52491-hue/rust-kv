@@ -1,5 +1,5 @@
 use crate::aof_encoder::{AofContent, AofEncoder};
-use crate::domain::{HSetCommand, HDelCommand};
+use crate::domain::{HDelCommand, HSetCommand};
 
 impl AofEncoder for HSetCommand {
     async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
@@ -14,12 +14,15 @@ impl AofEncoder for HSetCommand {
             buf.extend_from_slice(format!("${}\r\n", field.len()).as_bytes());
             buf.extend_from_slice(field.as_bytes());
             buf.extend_from_slice(b"\r\n");
-            
+
             buf.extend_from_slice(format!("${}\r\n", val.len()).as_bytes());
             buf.extend_from_slice(val);
             buf.extend_from_slice(b"\r\n");
         }
-        ctx.aof_tx.send(buf).await.map_err(|e| format!("发送AOF消息失败: {}", e))
+        ctx.aof_tx
+            .send(buf)
+            .await
+            .map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }
 
@@ -37,6 +40,9 @@ impl AofEncoder for HDelCommand {
             buf.extend_from_slice(field.as_bytes());
             buf.extend_from_slice(b"\r\n");
         }
-        ctx.aof_tx.send(buf).await.map_err(|e| format!("发送AOF消息失败: {}", e))
+        ctx.aof_tx
+            .send(buf)
+            .await
+            .map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }

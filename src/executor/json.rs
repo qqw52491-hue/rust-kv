@@ -1,14 +1,14 @@
 use crate::{
-    executor::{CommandContext, Executor},
     db::LockedDb,
     db::eviction::traits::KvOperator,
+    domain::command::{JsonGetCommand, JsonSetCommand},
     error::{Frame, KvError},
-    domain::command::{JsonSetCommand, JsonGetCommand},
+    executor::{CommandContext, Executor},
     types::{Value, ValueEntry},
 };
 use bytes::Bytes;
-use std::sync::Arc;
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 impl Executor for JsonSetCommand {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
@@ -35,32 +35,52 @@ impl Executor for JsonSetCommand {
                                 *target = new_json_val;
                             } else {
                                 // Put back the old value
-                                map.insert(self.key.clone(), ValueEntry { data: Value::Json(root, 0), ..val });
+                                map.insert(
+                                    self.key.clone(),
+                                    ValueEntry {
+                                        data: Value::Json(root, 0),
+                                        ..val
+                                    },
+                                );
                                 return Err(KvError::ProtocolError("Path does not exist".into()));
                             }
                         }
                         // Update size approximation
                         let new_size = serde_json::to_string(&root).unwrap_or_default().len();
-                        map.insert(self.key.clone(), ValueEntry { data: Value::Json(root, new_size), ..val });
+                        map.insert(
+                            self.key.clone(),
+                            ValueEntry {
+                                data: Value::Json(root, new_size),
+                                ..val
+                            },
+                        );
                     } else {
                         // Put back
                         map.insert(self.key.clone(), val);
-                        return Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                        return Err(KvError::ProtocolError(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .into(),
+                        ));
                     }
                 }
                 None => {
                     // Create new JSON object if path is root
                     if self.path == "/" || self.path == "" {
-                        let size = serde_json::to_string(&new_json_val).unwrap_or_default().len();
+                        let size = serde_json::to_string(&new_json_val)
+                            .unwrap_or_default()
+                            .len();
                         let new_entry = ValueEntry::new(Value::Json(new_json_val, size), None);
                         map.insert(self.key.clone(), new_entry);
                     } else {
-                        return Err(KvError::ProtocolError("could not set path in non-existent key".into()));
+                        return Err(KvError::ProtocolError(
+                            "could not set path in non-existent key".into(),
+                        ));
                     }
                 }
             }
 
-            ctx.send_aof(&crate::error::Command::JsonSet(self.clone())).await;
+            ctx.send_aof(&crate::error::Command::JsonSet(self.clone()))
+                .await;
         }
 
         Ok(Frame::Simple("OK".to_string()))
@@ -78,8 +98,8 @@ impl Executor for JsonGetCommand {
             Some(val) => {
                 if let Value::Json(root, _) = &val.data {
                     if self.path == "/" || self.path == "" {
-                        let json_str = serde_json::to_string(root)
-                            .unwrap_or_else(|_| "null".to_string());
+                        let json_str =
+                            serde_json::to_string(root).unwrap_or_else(|_| "null".to_string());
                         Ok(Frame::Bulk(Bytes::from(json_str)))
                     } else {
                         if let Some(target) = root.pointer(&self.path) {
@@ -91,7 +111,9 @@ impl Executor for JsonGetCommand {
                         }
                     }
                 } else {
-                    Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()))
+                    Err(KvError::ProtocolError(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+                    ))
                 }
             }
             None => Ok(Frame::Null),

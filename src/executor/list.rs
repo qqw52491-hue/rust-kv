@@ -1,10 +1,10 @@
+use crate::db::eviction::traits::KvOperator;
 use crate::{
-    executor::{CommandContext, Executor, parse_int_from_bytes},
     db::LockedDb,
-    error::{Frame, KvError, LPopCommand, LPushCommand, BLPopCommand},
+    error::{BLPopCommand, Frame, KvError, LPopCommand, LPushCommand},
+    executor::{CommandContext, Executor, parse_int_from_bytes},
     types::{Element, Value, ValueEntry},
 };
-use crate::db::eviction::traits::KvOperator;
 use std::collections::VecDeque;
 
 impl Executor for LPushCommand {
@@ -85,10 +85,11 @@ impl Executor for LPushCommand {
 
             new_len
         };
-        
-        // AOF 
+
+        // AOF
         if pushed_count > 0 {
-            ctx.send_aof(&crate::error::Command::LPush(self.clone())).await;
+            ctx.send_aof(&crate::error::Command::LPush(self.clone()))
+                .await;
         }
 
         Ok(Frame::Integer(new_len))
@@ -153,7 +154,7 @@ impl Executor for BLPopCommand {
             let mut own_lock;
             let mut sessions_guard;
             let map = get_write_lock!(ctx, &self.key, own_lock, sessions_guard);
-            
+
             // First check if list has data
             if let Some(entry) = map.take(&self.key) {
                 let exp = entry.expires_at;
@@ -166,20 +167,29 @@ impl Executor for BLPopCommand {
                                 Element::Int(i) => parse_int_from_bytes(i),
                             };
                             if !list.is_empty() {
-                                map.insert(self.key.clone(), ValueEntry::new(Value::List(list, elements_heap), exp));
+                                map.insert(
+                                    self.key.clone(),
+                                    ValueEntry::new(Value::List(list, elements_heap), exp),
+                                );
                             } else {
                                 map.delete(&self.key);
                             }
                             frame_bytes_opt = Some(frame_bytes);
                             (None, None)
                         } else {
-                            map.insert(self.key.clone(), ValueEntry::new(Value::List(list, elements_heap), exp));
+                            map.insert(
+                                self.key.clone(),
+                                ValueEntry::new(Value::List(list, elements_heap), exp),
+                            );
                             (None, None)
                         }
-                    },
+                    }
                     _ => {
                         map.insert(self.key.clone(), entry);
-                        return Ok(Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                        return Ok(Frame::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .into(),
+                        ));
                     }
                 }
             } else {
@@ -188,14 +198,17 @@ impl Executor for BLPopCommand {
                     CommandContext::Normal { db, .. } => Some(db.clone()),
                     _ => None, // Lua scripts or Recovery shouldn't block!
                 };
-                
+
                 if let Some(db) = &db {
                     // Register handle
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     let select_db = crate::context::CONN_STATE.with(|state| state.selected_db);
                     let mut queues = db.store.blocking_queues[select_db].lock().await;
-                    queues.entry(self.key.clone()).or_insert_with(VecDeque::new).push_back(tx);
-                    
+                    queues
+                        .entry(self.key.clone())
+                        .or_insert_with(VecDeque::new)
+                        .push_back(tx);
+
                     (Some(db.clone()), Some(rx))
                 } else {
                     (None, None)
@@ -205,13 +218,16 @@ impl Executor for BLPopCommand {
 
         // If we popped a value, return it
         if let Some(frame_bytes) = frame_bytes_opt {
-            ctx.send_aof(&crate::error::Command::LPop(crate::error::LPopCommand { key: self.key.clone() })).await;
+            ctx.send_aof(&crate::error::Command::LPop(crate::error::LPopCommand {
+                key: self.key.clone(),
+            }))
+            .await;
             return Ok(Frame::Array(vec![
-                Frame::Bulk(bytes::Bytes::copy_from_slice(self.key.as_bytes())), 
-                Frame::Bulk(frame_bytes)
+                Frame::Bulk(bytes::Bytes::copy_from_slice(self.key.as_bytes())),
+                Frame::Bulk(frame_bytes),
             ]));
         }
-        
+
         // Wait on channel if applicable
         if let Some(rx) = rx {
             let wait_duration = if self.timeout == 0 {
@@ -219,18 +235,19 @@ impl Executor for BLPopCommand {
             } else {
                 std::time::Duration::from_secs(self.timeout)
             };
-            
+
             match tokio::time::timeout(wait_duration, rx).await {
                 Ok(Ok(bytes)) => {
-                    ctx.send_aof(&crate::error::Command::LPop(crate::error::LPopCommand { key: self.key.clone() })).await;
+                    ctx.send_aof(&crate::error::Command::LPop(crate::error::LPopCommand {
+                        key: self.key.clone(),
+                    }))
+                    .await;
                     Ok(Frame::Array(vec![
-                        Frame::Bulk(bytes::Bytes::copy_from_slice(self.key.as_bytes())), 
-                        Frame::Bulk(bytes)
+                        Frame::Bulk(bytes::Bytes::copy_from_slice(self.key.as_bytes())),
+                        Frame::Bulk(bytes),
                     ]))
-                },
-                _ => {
-                    Ok(Frame::Null)
                 }
+                _ => Ok(Frame::Null),
             }
         } else {
             Ok(Frame::Null)

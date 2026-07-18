@@ -94,11 +94,17 @@ impl SkipList {
         let mut current = self.head;
 
         for i in (0..self.max_level).rev() {
-            rank[i] = if i == self.max_level - 1 { 0 } else { rank[i + 1] };
+            rank[i] = if i == self.max_level - 1 {
+                0
+            } else {
+                rank[i + 1]
+            };
             while self.nodes[current].level[i].forward != NULL_NODE {
                 let next_idx = self.nodes[current].level[i].forward;
                 let next_node = &self.nodes[next_idx];
-                if next_node.score < score || (next_node.score == score && next_node.member < member) {
+                if next_node.score < score
+                    || (next_node.score == score && next_node.member < member)
+                {
                     rank[i] += self.nodes[current].level[i].span;
                     current = next_idx;
                 } else {
@@ -135,7 +141,11 @@ impl SkipList {
         }
 
         let prev_idx = update[0];
-        self.nodes[new_idx].backward = if prev_idx == self.head { NULL_NODE } else { prev_idx };
+        self.nodes[new_idx].backward = if prev_idx == self.head {
+            NULL_NODE
+        } else {
+            prev_idx
+        };
 
         if self.nodes[new_idx].level[0].forward != NULL_NODE {
             let next_idx = self.nodes[new_idx].level[0].forward;
@@ -156,7 +166,9 @@ impl SkipList {
             while self.nodes[current].level[i].forward != NULL_NODE {
                 let next_idx = self.nodes[current].level[i].forward;
                 let next_node = &self.nodes[next_idx];
-                if next_node.score < score || (next_node.score == score && next_node.member < *member) {
+                if next_node.score < score
+                    || (next_node.score == score && next_node.member < *member)
+                {
                     current = next_idx;
                 } else {
                     break;
@@ -194,7 +206,9 @@ impl SkipList {
             self.tail = self.nodes[target_idx].backward;
         }
 
-        while self.max_level > 1 && self.nodes[self.head].level[self.max_level - 1].forward == NULL_NODE {
+        while self.max_level > 1
+            && self.nodes[self.head].level[self.max_level - 1].forward == NULL_NODE
+        {
             self.max_level -= 1;
         }
 
@@ -211,7 +225,9 @@ impl SkipList {
             while self.nodes[current].level[i].forward != NULL_NODE {
                 let next_idx = self.nodes[current].level[i].forward;
                 let next_node = &self.nodes[next_idx];
-                if next_node.score < score || (next_node.score == score && next_node.member <= *member) {
+                if next_node.score < score
+                    || (next_node.score == score && next_node.member <= *member)
+                {
                     rank += self.nodes[current].level[i].span;
                     current = next_idx;
                 } else {
@@ -225,7 +241,7 @@ impl SkipList {
             None
         }
     }
-    
+
     pub fn get_element_by_rank(&self, rank: usize) -> Option<(f64, Bytes)> {
         if rank >= self.length {
             return None;

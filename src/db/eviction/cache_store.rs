@@ -1,8 +1,8 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -10,13 +10,11 @@ use fxhash::FxHasher;
 use std::hash::{Hash, Hasher};
 use tokio::sync::RwLock;
 
-use crate::{config::EvictionType, types::ValueEntry};
-use crate::db::eviction::{
-    EvictionPolicy, LfuNode, LruNode,
-};
+use crate::db::LockedDb;
 use crate::db::eviction::direct_node::DirectCacheNode;
 use crate::db::eviction::lua_node::LuaCacheNode;
-use crate::db::LockedDb;
+use crate::db::eviction::{EvictionPolicy, LfuNode, LruNode};
+use crate::{config::EvictionType, types::ValueEntry};
 
 pub const NUM_SHARDS: usize = 64; // 64 个分片
 

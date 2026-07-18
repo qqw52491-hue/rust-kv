@@ -2,7 +2,10 @@ use bytes::Bytes;
 use itoa::Buffer;
 
 use crate::{
-    context::ConnectionContent, core_time::get_cached_time_ms, db::{Db, LockedDb}, error::{Frame, KvError}
+    context::ConnectionContent,
+    core_time::get_cached_time_ms,
+    db::{Db, LockedDb},
+    error::{Frame, KvError},
 };
 use std::sync::Arc;
 
@@ -15,7 +18,8 @@ macro_rules! get_write_lock {
                 $sessions_guard = lua_sessions.lock().await;
                 $sessions_guard.get_mut(&shard_index).unwrap()
             }
-            crate::executor::CommandContext::Normal { db, .. } | crate::executor::CommandContext::Recovery { db } => {
+            crate::executor::CommandContext::Normal { db, .. }
+            | crate::executor::CommandContext::Recovery { db } => {
                 $own_lock = db.store.lock_write($key).await;
                 &mut $own_lock
             }
@@ -32,7 +36,8 @@ macro_rules! get_read_lock {
                 $sessions_guard = lua_sessions.lock().await;
                 $sessions_guard.get_mut(&shard_index).unwrap()
             }
-            crate::executor::CommandContext::Normal { db, .. } | crate::executor::CommandContext::Recovery { db } => {
+            crate::executor::CommandContext::Normal { db, .. }
+            | crate::executor::CommandContext::Recovery { db } => {
                 $own_lock = db.store.lock_read($key).await;
                 &mut $own_lock
             }
@@ -40,14 +45,14 @@ macro_rules! get_read_lock {
     };
 }
 
- mod common;
- mod string;
-pub mod list;
+mod common;
 pub mod hash;
 pub mod json;
-pub mod zset;
+pub mod list;
 #[cfg(test)]
 mod list_test;
+mod string;
+pub mod zset;
 
 #[derive(Clone)]
 pub enum CommandContext {
@@ -66,7 +71,10 @@ pub enum CommandContext {
 impl CommandContext {
     /// 触发 AOF 日志发送。调用方需自行确保在写锁的作用域 `{ ... }` 内调用该方法。
     pub async fn send_aof(&self, cmd: &crate::error::Command) {
-        if let CommandContext::Normal { connect_content, .. } = self {
+        if let CommandContext::Normal {
+            connect_content, ..
+        } = self
+        {
             if let Err(e) = cmd
                 .encode_aof_command(crate::aof_encoder::AofContent {
                     aof_tx: &connect_content.aof_tx,
@@ -84,7 +92,7 @@ pub trait Executor {
     fn execute(
         &self,
         ctx: CommandContext,
-    ) -> impl std::future::Future<Output = Result<Frame, KvError>> + Send ;
+    ) -> impl std::future::Future<Output = Result<Frame, KvError>> + Send;
 }
 
 pub fn calculate_expiration_timestamp_ms(expiration: &crate::error::Expiration) -> u64 {
@@ -92,7 +100,7 @@ pub fn calculate_expiration_timestamp_ms(expiration: &crate::error::Expiration) 
     match expiration {
         crate::error::Expiration::PX(ms) => now + ms,
         crate::error::Expiration::EX(s) => now + s * 1000,
-        crate::error::Expiration::EXAT(s) => *s,
+        crate::error::Expiration::EXAT(s) => s.saturating_mul(1000),
         crate::error::Expiration::PXAT(ms) => *ms,
     }
 }
@@ -106,4 +114,25 @@ pub fn parse_int_from_bytes(i: i64) -> Bytes {
 pub fn bytes_to_i64_fast(b: &Bytes) -> Option<i64> {
     let result = lexical_core::parse::<i64>(b);
     result.ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exat_seconds_are_converted_to_milliseconds() {
+        assert_eq!(
+            calculate_expiration_timestamp_ms(&crate::error::Expiration::EXAT(1_700_000_000)),
+            1_700_000_000_000
+        );
+    }
+
+    #[test]
+    fn pxat_is_already_in_milliseconds() {
+        assert_eq!(
+            calculate_expiration_timestamp_ms(&crate::error::Expiration::PXAT(1_700_000_000_123)),
+            1_700_000_000_123
+        );
+    }
 }

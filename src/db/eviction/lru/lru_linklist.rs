@@ -17,7 +17,7 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone )]
+#[derive(Debug, Clone)]
 pub struct LruList {
     head: Option<NonNull<Node>>,
     tail: Option<NonNull<Node>>,
@@ -64,7 +64,6 @@ impl LruList {
         self.tail = Some(new_node_ptr);
         new_node_ptr
     }
-
 
     pub fn push_mid_back(&mut self, node_ptr: NonNull<Node>) {
         // 如果节点已经是尾节点，直接返回

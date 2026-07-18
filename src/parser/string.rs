@@ -1,9 +1,12 @@
 use std::{sync::Arc, vec::IntoIter};
 
-use crate::{parser::{extract_bulk_bytes, extract_bulk_integer, extract_bulk_string, Parser}, error::{Command, Expiration, Frame, GetCommand, KvError, SetCommand, SetCondition}};
+use crate::{
+    error::{Command, Expiration, Frame, GetCommand, KvError, SetCommand, SetCondition},
+    parser::{Parser, extract_bulk_bytes, extract_bulk_integer, extract_bulk_string},
+};
 
 impl Parser for SetCommand {
-     fn parse( mut itor: IntoIter<Frame>,_command_name:String) -> Result<Command, KvError> {
+    fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
         let key = extract_bulk_string(itor.next())?;
         let value = extract_bulk_bytes(itor.next())?;
         let mut expiration: Option<Expiration> = None;
@@ -43,7 +46,7 @@ impl Parser for SetCommand {
                         return Err(KvError::ProtocolError("PXAT 需要一个时间参数".into()));
                     }
                 }
-                Frame::Bulk(ref bytes) if bytes.eq_ignore_ascii_case(b"EXAT") =>{
+                Frame::Bulk(ref bytes) if bytes.eq_ignore_ascii_case(b"EXAT") => {
                     if let Some(time_frame) = itor.next() {
                         let time = extract_bulk_integer(Some(time_frame))?;
                         if time <= 0 {
@@ -81,14 +84,14 @@ impl Parser for SetCommand {
 }
 
 impl Parser for GetCommand {
-    fn parse(mut itor: IntoIter<Frame>,_command_name:String) -> Result<Command, KvError> {
+    fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
         let key = extract_bulk_string(itor.next())?;
-        Ok(Command::Get(GetCommand { key :Arc::new(key) }))
+        Ok(Command::Get(GetCommand { key: Arc::new(key) }))
     }
 }
 
-use crate::domain::MSetCommand;
 use crate::domain::MGetCommand;
+use crate::domain::MSetCommand;
 
 impl Parser for MSetCommand {
     fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {

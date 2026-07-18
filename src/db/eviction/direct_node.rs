@@ -1,10 +1,10 @@
 use std::sync::{Arc, atomic::Ordering};
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard};
 
-use crate::types::ValueEntry;
 use crate::core_time::get_cached_time_ms;
-use crate::db::eviction::traits::{KvOperator, LockOwner, EvictionPolicy};
-use crate::db::eviction::cache_store::{MemoryCacheNode, GLOBAL_MEMORY};
+use crate::db::eviction::cache_store::{GLOBAL_MEMORY, MemoryCacheNode};
+use crate::db::eviction::traits::{EvictionPolicy, KvOperator, LockOwner};
+use crate::types::ValueEntry;
 
 // 场景 A: 普通模式的包装器
 // 它只负责持有锁，操作直接透传给底层
@@ -107,71 +107,57 @@ impl KvOperator for DirectCacheNode {
             // 因为 self 是 &mut，guard 自动就是可变引用
             // guard 的类型其实是： &mut OwnedRwLockWriteGuard<MemoryCacheNode>
             DirectCacheNode::Writeguard(guard) => {
-                // let eviction = guard.evicition.lock().await;
-                // 1. 【关键修正】剥两层壳！
-                // 第一个 * ：解开 &mut 引用，拿到 Guard 智能指针
-                // 第二个 * ：触发 Guard 的 Deref，拿到内部的 MemoryCacheNode
-                // &mut    ：重新获取 Node 的可变引用
+                // 这里需要“剥两层壳”：
+                // 1. 第一层 * 解开 &mut 引用，拿到 OwnedRwLockWriteGuard；
+                // 2. 第二层 * 通过 Guard 的 DerefMut，拿到底层 MemoryCacheNode；
+                // 3. 最外层 &mut 再取得 Node 的可变引用。
+                //
+                // 显式拿到 node 后，编译器可以清楚地区分 db_store、evicition
+                // 和内存计数器这几个互不重叠的字段，后面才能安全地分别操作它们。
                 let node = &mut **guard;
 
-                // 2. 【简单粗暴】手动拿字段
-                // 这样写，编译器 100% 知道 store 和 eviction 是分开的
-                // 绝对不会报 "borrowed more than once"
-                let store = &mut node.db_store;
-                let eviction = &mut node.evicition;
-
-                // 3. 先更新 LRU (操作 eviction)
-                eviction.lock().unwrap().on_read(key);
-
-                // 4. 【第一查】只拿 bool 标记
-                // 这一步只借用 store 一瞬间，用完立刻释放
-                let should_remove = if let Some(v) = store.get(key) {
-                    if let Some(t) = v.expires_at {
-                        get_cached_time_ms() > t
-                    } else {
-                        false
-                    }
-                } else {
-                    return None;
+                // 第一查只计算过期标记，不把 db_store 中 ValueEntry 的引用带到后面。
+                // 这样临时的不可变借用会在 match 结束时释放，随后才能执行 remove。
+                let is_expired = match node.db_store.get(key) {
+                    Some(value) => value
+                        .expires_at
+                        .is_some_and(|expires_at| get_cached_time_ms() > expires_at),
+                    None => return None,
                 };
 
-                // 5. 【第二查】根据标记行动
-                // 此时 store 是完全自由的
-                if should_remove {
-                    store.remove(key);
-                    None
-                } else {
-                    // 没过期，重新获取并返回
-                    store.get(key)
+                if is_expired {
+                    // 第二查执行真正删除。这里不能只写 db_store.remove：
+                    // 数据存储、淘汰策略和两级内存计数是一组必须同步维护的不变量。
+                    // 少更新其中任何一个，都会留下幽灵 LRU 节点或错误的内存占用。
+                    if let Some(value) = node.db_store.remove(key) {
+                        node.evicition.lock().unwrap().on_delete(key.clone());
+                        node.approx_memory
+                            .fetch_sub(value.data_size, Ordering::Relaxed);
+                        GLOBAL_MEMORY.fetch_sub(value.data_size, Ordering::Relaxed);
+                    }
+                    return None;
                 }
+
+                // 只有 key 确实存在且未过期，才把它标记为最近访问。
+                node.evicition.lock().unwrap().on_read(key);
+                node.db_store.get(key)
             }
             DirectCacheNode::Readguard(rw_lock_read_guard) => {
-                // 1. 拿引用 (0 开销)
+                // 读锁可以判断过期，但不能修改 db_store 做物理删除。
+                // 因此读路径只向业务层返回 None；之后由写路径或后台 TTL 任务完成清理。
                 let node = &**rw_lock_read_guard;
-                let store = &node.db_store;
-                let eviction = &node.evicition; // 这里是 Mutex<Box<dyn Policy>>
+                let value = node.db_store.get(key)?;
 
-                // 2. 更新 LRU (内部可变性，微小开销)
-                // 这里的 Mutex 是 std::sync::Mutex，非常快
-                eviction.lock().unwrap().on_read(key);
-                // 3. 查数据
-                if let Some(value) = store.get(key) {
-                    // 4. 检查过期
-                    if let Some(expire_time) = value.expires_at {
-                        if get_cached_time_ms() > expire_time {
-                            // 【惰性删除策略】
-                            // 发现过期 -> 既然只读锁删不掉 -> 直接返回 None
-                            // 此时在业务层看来，key 已经不存在了
-                            return None;
-                        }
-                    }
-
-                    // 5. 命中返回
-                    // 记得返回 Clone 的值 (ValueEntry)，不要返回引用
-                    return Some(value);
+                if value
+                    .expires_at
+                    .is_some_and(|expires_at| get_cached_time_ms() > expires_at)
+                {
+                    return None;
                 }
 
-                None
+                // 只有真实且未过期的命中才更新淘汰策略。
+                node.evicition.lock().unwrap().on_read(key);
+                Some(value)
             }
         }
     }
@@ -231,5 +217,42 @@ impl LockOwner for DirectCacheNode {
                 GLOBAL_MEMORY.fetch_sub(size, Ordering::Relaxed);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::EvictionType,
+        core_time::CACHED_TIME_MS,
+        types::{Element, Value},
+    };
+    use bytes::Bytes;
+    use std::sync::atomic::Ordering;
+    use tokio::sync::RwLock;
+
+    #[tokio::test]
+    async fn expired_write_lookup_cleans_memory_and_eviction_metadata() {
+        CACHED_TIME_MS.store(100, Ordering::Relaxed);
+        let cache = Arc::new(RwLock::new(MemoryCacheNode::new(&EvictionType::LRU)));
+        let key = Arc::new("expired".to_string());
+        let value = ValueEntry::new(
+            Value::Simple(Element::String(Bytes::from_static(b"value"))),
+            Some(50),
+        );
+
+        let mut node = DirectCacheNode::Writeguard(cache.write_owned().await);
+        node.insert(key.clone(), value);
+        assert!(node.get_memory_usage() > 0);
+
+        assert!(node.select(&key).is_none());
+        assert_eq!(node.get_memory_usage(), 0);
+        assert!(
+            node.get_eviction_policy()
+                .unwrap()
+                .get_random_sample_key()
+                .is_none()
+        );
     }
 }

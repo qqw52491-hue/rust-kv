@@ -1,11 +1,11 @@
 use crate::{
-    executor::{CommandContext, Executor},
     db::LockedDb,
     db::eviction::traits::KvOperator,
-    error::{Frame, KvError},
-    domain::command::{ZAddCommand, ZScoreCommand, ZRankCommand, ZRangeCommand, ZRemCommand},
-    types::{Value, ValueEntry},
     db::zset::ZSet,
+    domain::command::{ZAddCommand, ZRangeCommand, ZRankCommand, ZRemCommand, ZScoreCommand},
+    error::{Frame, KvError},
+    executor::{CommandContext, Executor},
+    types::{Value, ValueEntry},
 };
 use bytes::Bytes;
 
@@ -25,10 +25,15 @@ impl Executor for ZAddCommand {
                         added = 1;
                     }
                     let new_size = zset.heap_memory_size();
-                    map.insert(self.key.clone(), ValueEntry::new(Value::ZSet(zset, new_size), expires_at));
+                    map.insert(
+                        self.key.clone(),
+                        ValueEntry::new(Value::ZSet(zset, new_size), expires_at),
+                    );
                 } else {
                     map.insert(self.key.clone(), val);
-                    return Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                    return Err(KvError::ProtocolError(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+                    ));
                 }
             }
             None => {
@@ -36,10 +41,14 @@ impl Executor for ZAddCommand {
                 zset.insert(self.score, self.member.clone());
                 added = 1;
                 let size = zset.heap_memory_size();
-                map.insert(self.key.clone(), ValueEntry::new(Value::ZSet(zset, size), None));
+                map.insert(
+                    self.key.clone(),
+                    ValueEntry::new(Value::ZSet(zset, size), None),
+                );
             }
         }
-        ctx.send_aof(&crate::error::Command::ZAdd(self.clone())).await;
+        ctx.send_aof(&crate::error::Command::ZAdd(self.clone()))
+            .await;
         Ok(Frame::Integer(added))
     }
 }
@@ -56,7 +65,9 @@ impl Executor for ZScoreCommand {
                     return Ok(Frame::Bulk(Bytes::from(score.to_string())));
                 }
             } else {
-                return Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                return Err(KvError::ProtocolError(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+                ));
             }
         }
         Ok(Frame::Null)
@@ -75,7 +86,9 @@ impl Executor for ZRankCommand {
                     return Ok(Frame::Integer(rank as i64));
                 }
             } else {
-                return Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                return Err(KvError::ProtocolError(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+                ));
             }
         }
         Ok(Frame::Null)
@@ -97,7 +110,9 @@ impl Executor for ZRangeCommand {
                 }
                 return Ok(Frame::Array(frames));
             } else {
-                return Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                return Err(KvError::ProtocolError(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+                ));
             }
         }
         Ok(Frame::Array(Vec::new()))
@@ -122,22 +137,31 @@ impl Executor for ZRemCommand {
                             // If empty, don't put it back
                         } else {
                             let new_size = zset.heap_memory_size();
-                            map.insert(self.key.clone(), ValueEntry::new(Value::ZSet(zset, new_size), expires_at));
+                            map.insert(
+                                self.key.clone(),
+                                ValueEntry::new(Value::ZSet(zset, new_size), expires_at),
+                            );
                         }
                     } else {
                         let new_size = zset.heap_memory_size();
-                        map.insert(self.key.clone(), ValueEntry::new(Value::ZSet(zset, new_size), expires_at));
+                        map.insert(
+                            self.key.clone(),
+                            ValueEntry::new(Value::ZSet(zset, new_size), expires_at),
+                        );
                     }
                 } else {
                     map.insert(self.key.clone(), val);
-                    return Err(KvError::ProtocolError("WRONGTYPE Operation against a key holding the wrong kind of value".into()));
+                    return Err(KvError::ProtocolError(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+                    ));
                 }
             }
             None => {}
         }
-        
+
         if removed > 0 {
-            ctx.send_aof(&crate::error::Command::ZRem(self.clone())).await;
+            ctx.send_aof(&crate::error::Command::ZRem(self.clone()))
+                .await;
         }
         Ok(Frame::Integer(removed))
     }

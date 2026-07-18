@@ -103,7 +103,6 @@ impl Storage {
     ) -> Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> {
         let shutdown_clone = shutdown_tx.clone();
         let task_vec: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> = Arc::new(Vec::new().into());
-        let task_vec_clone = task_vec.clone();
         //定时任务接收者
         loop {
             let mut shutdown = shutdown_clone.clone().subscribe();
@@ -146,6 +145,9 @@ impl Storage {
                         //    这创建了一个 Reverse<(usize, usize, usize)> 类型的 *值*
                         let item_for_heap = Reverse(tuple_value);
                         shard_indices.push(item_for_heap);
+                        if shard_indices.len() > EVICTION_MAX_NUMBER {
+                            shard_indices.pop();
+                        }
                     }
                 }
                 let mut handles = Vec::new();

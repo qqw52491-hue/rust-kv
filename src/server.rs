@@ -83,15 +83,9 @@ pub async fn handle_connection(
                             // 转换失败（语义错误），准备一个错误响应
                             let error_response = Frame::Error(e.to_string());
                             socket.write_all(&error_response.serialize()).await?;
-                            //错误处理 裁减掉错误指令
-                            match buf.windows(2).position(|window| window == b"*") {
-                                Some(index) => {
-                                    buf.advance(index);
-                                }
-                                None => {
-                                    buf.clear();
-                                }
-                            }
+                            // 协议或命令格式已经损坏时无法可靠定位下一帧边界。
+                            // 清空当前批次，避免坏数据永久滞留并导致缓冲区无限增长。
+                            buf.clear();
                             // 继续处理缓冲区里的下一个命令
                             continue;
                         }
@@ -138,17 +132,22 @@ async fn explain_execute_command(
      *   1.一半就是按照校验执行就行 执行出错的时候很少
      *   2.就是兼容没有实现的指令 这一步返回特定返回值 不需要再上一层就直接返回错误
      */
-    while let Ok(Some((frame, size))) = parse_frame(vec) {
-        match Command::try_from(frame) {
-            Ok(command) => match frame {
-                _ => {
+    loop {
+        match parse_frame(vec) {
+            Ok(Some((frame, size))) => match Command::try_from(frame) {
+                Ok(command) => {
                     let result: Frame =
                         execute_command_normal(command, db, command_content.clone()).await?;
                     vec_result.push(result.serialize());
                     vec = &vec[size..];
                     total_size += size;
                 }
+                Err(e) => {
+                    buf.advance(total_size);
+                    return Err(e.into());
+                }
             },
+            Ok(None) => break,
             Err(e) => {
                 buf.advance(total_size);
                 return Err(e.into());

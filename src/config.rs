@@ -1,4 +1,3 @@
-
 use once_cell::sync::Lazy;
 
 pub struct Config {
@@ -9,7 +8,6 @@ pub enum EvictionType {
     LFU,
 }
 
-
 // 注意 `pub` 关键字，这样其他模块才能访问它
 pub static CONFIG: Lazy<Config> = Lazy::new(|| {
     println!("--- Loading configuration ---");
@@ -17,4 +15,3 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
         eviction_type: EvictionType::LRU, // 这里可以根据需要加载不同的配置
     }
 });
-

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::types::ValueEntry;
+use std::sync::Arc;
 
 pub trait EvictionPolicy: Send + Sync {
     // 当写入时，策略需要做什么？

@@ -5,10 +5,10 @@ use tokio::sync::mpsc::Sender;
 
 use crate::{core_time::get_cached_time_ms, error::Command};
 
-mod string;
-mod list;
 mod hash;
 mod json;
+mod list;
+mod string;
 mod zset;
 
 pub trait AofEncoder {
@@ -83,19 +83,25 @@ impl Command {
     }
 }
 
-use crate::error::{MultiCommand, ExecCommand, Frame};
+use crate::error::{ExecCommand, Frame, MultiCommand};
 
 impl AofEncoder for MultiCommand {
     async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let frame = Frame::Array(vec![Frame::Bulk(Bytes::from("MULTI"))]);
-        ctx.aof_tx.send(frame.serialize()).await.map_err(|e| e.to_string())
+        ctx.aof_tx
+            .send(frame.serialize())
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 
 impl AofEncoder for ExecCommand {
     async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let frame = Frame::Array(vec![Frame::Bulk(Bytes::from("EXEC"))]);
-        ctx.aof_tx.send(frame.serialize()).await.map_err(|e| e.to_string())
+        ctx.aof_tx
+            .send(frame.serialize())
+            .await
+            .map_err(|e| e.to_string())
     }
 }
 

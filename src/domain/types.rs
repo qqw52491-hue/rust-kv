@@ -45,13 +45,14 @@ impl Value {
                 // deque.capacity() * size_of::<Element>() 是它在堆上占用的连续内存
                 let container_heap = deque.capacity() * std::mem::size_of::<Element>();
                 *elements_heap + container_heap
-            },
+            }
 
             Value::Hash(map, elements_heap) => {
                 // HashMap 的 bucket 数组在堆上
-                let container_heap = map.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<Element>());
+                let container_heap = map.capacity()
+                    * (std::mem::size_of::<String>() + std::mem::size_of::<Element>());
                 *elements_heap + container_heap
-            },
+            }
 
             Value::Set(set, elements_heap) => {
                 let container_heap = set.capacity() * std::mem::size_of::<Element>();

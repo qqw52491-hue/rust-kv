@@ -1,15 +1,13 @@
 use crate::Db;
 use crate::aof_encoder::AofContent;
-use crate::executor::{CommandContext, Executor};
 use crate::context::ConnectionContent;
 use crate::db::LockedDb;
 use crate::error::{Command, Frame, KvError, LockSpec};
+use crate::executor::{CommandContext, Executor};
 
 // 假定：Command: Clone
 pub async fn execute_command(command: Command, db: &Db) -> Result<Frame, KvError> {
-    let ctx = CommandContext::Recovery {
-        db: db.clone(),
-    };
+    let ctx = CommandContext::Recovery { db: db.clone() };
     command.execute(ctx).await
 }
 
@@ -22,16 +20,36 @@ macro_rules! delegate_execute {
 }
 
 impl Executor for Command {
-    async fn execute(
-        &self,
-        ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
-        delegate_execute!(self, ctx, [
-            Get, Set, Ping, Unimplement, EvalCommand,
-            LPush, LPop, BLPop, HSet, HGet, HDel, MSet, MGet, Multi, Exec, MultiGroup,
-            JsonSet, JsonGet,
-            ZAdd, ZScore, ZRank, ZRange, ZRem
-        ])
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
+        delegate_execute!(
+            self,
+            ctx,
+            [
+                Get,
+                Set,
+                Ping,
+                Unimplement,
+                EvalCommand,
+                LPush,
+                LPop,
+                BLPop,
+                HSet,
+                HGet,
+                HDel,
+                MSet,
+                MGet,
+                Multi,
+                Exec,
+                MultiGroup,
+                JsonSet,
+                JsonGet,
+                ZAdd,
+                ZScore,
+                ZRank,
+                ZRange,
+                ZRem
+            ]
+        )
     }
 }
 
@@ -50,9 +68,9 @@ pub async fn execute_command_normal(
         db: db.clone(),
         connect_content: connect_content.clone(),
     };
-    
+
     let frame: Frame = command.execute(ctx).await?;
-        
+
     Ok(frame)
 }
 
