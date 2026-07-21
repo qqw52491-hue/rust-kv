@@ -44,25 +44,22 @@ pub async fn run() {
     //地基停止 广播
     let (infra_shutdown_tx, _) = broadcast::channel::<()>(1);
 
-    // 创建一个容量为 50 的“池”（通道）
-    let (lua_vm_sender, lua_vm_receiver) = flume::bounded::<Lua>(50);
+    // 创建一个容量为 lua_vm_pool_size 的“池”（通道）
+    let (lua_vm_sender, lua_vm_receiver) = flume::bounded::<Lua>(CONFIG.lua_vm_pool_size);
 
     //初始化lua 环境条件
     let (lua_runtime, _lua_handle) = init_lua_vm(lua_vm_sender).await;
 
     //初始化并且直接获取sender
-    let lua_sender = start_multi_lua_actor(8, 100000);
+    let lua_sender = start_multi_lua_actor(CONFIG.lua_worker_count, CONFIG.lua_queue_depth);
 
-    let aop_file_path = "database.aof";
     // 启动专门的 AOF 写入后台任务
-    let aof_task = tokio::spawn(aof_writer_task(rx, aop_file_path));
+    let aof_task = tokio::spawn(aof_writer_task(rx, &CONFIG.aof_file_path));
 
     tracing_subscriber::fmt::init();
     // 1. 绑定监听地址
-    // "0.0.0.0:6380" 允许所有网卡访问（包括 Docker 容器从内部访问宿主机）
-    // 我们将其修改为了 6380，这样你可以开启双开对比性能
-    let listener = TcpListener::bind("0.0.0.0:6380").await.unwrap();
-    println!("服务器启动，监听于 0.0.0.0:6380");
+    let listener = TcpListener::bind(&CONFIG.server_addr).await.unwrap();
+    println!("服务器启动，监听于 {}", CONFIG.server_addr);
 
     //创建db
     let mut db = Db::new(&CONFIG.eviction_type);
@@ -74,7 +71,7 @@ pub async fn run() {
     };
     CONN_STATE
         .scope(initial_state, async {
-            match explain_execute_aofcommand(aop_file_path, &mut db).await {
+            match explain_execute_aofcommand(&CONFIG.aof_file_path, &mut db).await {
                 Err(e) => {
                     panic!("aof 清理失败  {}", e)
                 }

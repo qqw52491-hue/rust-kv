@@ -9,7 +9,7 @@ use crate::{
     core_time::get_cached_time_ms,
     db::{
         Storage,
-        eviction::{LockOwner, MemoryCache, NUM_SHARDS, traits::{EvictionPolicy, KvOperator}},
+        eviction::{LockOwner, MemoryCache, traits::{EvictionPolicy, KvOperator}},
     },
 };
 
@@ -32,7 +32,7 @@ impl Storage {
             //先创建一个数组存储
             let mut active_shards: Vec<(usize, usize)> = Vec::new();
             for db_index in 0..16 {
-                for shard_index in 0..NUM_SHARDS {
+                for shard_index in 0..crate::config::CONFIG.num_shards {
                     let shard = self.get_lock_read(db_index, shard_index).await;
                     if shard.get_memory_usage() > 0 {
                         active_shards.push((db_index, shard_index));
@@ -132,7 +132,7 @@ impl Storage {
                 let mut shard_indices: BinaryHeap<Reverse<(usize, usize, usize)>> =
                     BinaryHeap::with_capacity(EVICTION_MAX_NUMBER);
                 for db_index in 0..16 {
-                    for shard_index in 0..NUM_SHARDS {
+                    for shard_index in 0..crate::config::CONFIG.num_shards {
                         let shard = self.get_lock_read(db_index, shard_index).await;
                         let memory = shard.get_memory_usage();
                         //跳过为空的

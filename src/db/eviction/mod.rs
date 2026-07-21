@@ -8,7 +8,7 @@ pub mod lua_node;
 pub mod traits;
 pub mod strategy;
 
-pub use cache_store::{GLOBAL_MEMORY, MemoryCache, MemoryCacheNode, NUM_SHARDS, TtlEntry};
+pub use cache_store::{GLOBAL_MEMORY, MemoryCache, MemoryCacheNode, TtlEntry};
 pub use direct_node::DirectCacheNode;
 pub use lfu::lfu_struct::LfuNode;
 pub use lru::lru_struct::LruNode;

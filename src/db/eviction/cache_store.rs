@@ -16,7 +16,7 @@ use crate::db::eviction::lua_node::LuaCacheNode;
 use crate::db::eviction::{EvictionPolicy, LfuNode, LruNode};
 use crate::{config::EvictionType, types::ValueEntry};
 
-pub const NUM_SHARDS: usize = 64; // 64 个分片
+
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TtlEntry {
@@ -114,8 +114,9 @@ pub struct MemoryCache {
 
 impl MemoryCache {
     pub fn new(config_type: &EvictionType) -> Self {
-        let mut local_vec: Vec<Arc<RwLock<MemoryCacheNode>>> = Vec::with_capacity(NUM_SHARDS);
-        for _ in 0..NUM_SHARDS {
+        let num_shards = crate::config::CONFIG.num_shards;
+        let mut local_vec: Vec<Arc<RwLock<MemoryCacheNode>>> = Vec::with_capacity(num_shards);
+        for _ in 0..num_shards {
             local_vec.push(Arc::new(RwLock::new(MemoryCacheNode::new(config_type))));
         }
         MemoryCache { message: local_vec }
@@ -125,7 +126,7 @@ impl MemoryCache {
         let mut hasher = FxHasher::default();
         key.hash(&mut hasher);
         let hash_value = hasher.finish();
-        (hash_value as usize) % NUM_SHARDS
+        (hash_value as usize) % crate::config::CONFIG.num_shards
     }
 
     pub async fn get_lock_write(&self, key: &Arc<String>) -> LockedDb {
