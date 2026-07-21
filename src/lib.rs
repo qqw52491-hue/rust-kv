@@ -31,11 +31,31 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
+use std::time::Duration;
+use crate::db::eviction::GLOBAL_MEMORY;
+use std::sync::atomic::Ordering;
 
 /*
   各种服务的编排和关联
 */
 pub async fn run() {
+    // 启动 Prometheus Exporter 后台 HTTP 服务器 (监听 9091 端口，避开 Prometheus 自身的 9090)
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(([0, 0, 0, 0], 9091))
+        .install()
+        .expect("Failed to install Prometheus recorder");
+    println!("监控模块启动，Prometheus 指标接口: http://0.0.0.0:9091/metrics");
+
+    // 启动一个后台任务，专门负责大屏里的“内存图表”
+    tokio::spawn(async move {
+        loop {
+            // 每隔 1 秒，把当前的全局内存同步给 Prometheus
+            let mem = GLOBAL_MEMORY.load(Ordering::Relaxed);
+            metrics::gauge!("kv_total_memory_bytes").set(mem as f64);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+
     // 这个通道必须要大 这个事最基本的事情
     let (aof_tx, rx) = mpsc::channel::<AofMessage>(1000000);
     //获取类型 这个广播

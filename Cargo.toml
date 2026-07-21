@@ -38,3 +38,5 @@ flume = "0.11"
 
 async-trait = "0.1"
 dotenvy = "0.15.7"
+metrics = "0.24.6"
+metrics-exporter-prometheus = "0.18.3"

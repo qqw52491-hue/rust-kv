@@ -21,6 +21,9 @@ macro_rules! delegate_execute {
 
 impl Executor for Command {
     async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
+        // 全局 QPS 埋点：每处理一个命令，计数器 +1
+        metrics::counter!("kv_commands_total").increment(1);
+
         delegate_execute!(
             self,
             ctx,

@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rust-kv-prometheus
+    # 在 Linux 下使用 host 网络，让容器内的 localhost 直接对应宿主机的 localhost
+    network_mode: "host"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rust-kv-grafana
+    network_mode: "host"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin # 默认密码 admin
