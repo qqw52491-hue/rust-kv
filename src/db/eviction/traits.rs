@@ -31,8 +31,8 @@ pub trait LockOwner: KvOperator {
     // 1. 暴露内存大小 (AtomicUsize 通常只返回数值 usize)
     fn get_memory_usage(&self) -> usize;
 
-    // 2. 暴露驱逐策略 (返回引用 &dyn，而不是 Box)
-    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, Box<dyn EvictionPolicy>>>;
+    // 2. 暴露驱逐策略 (使用枚举，避免动态分发开销)
+    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, crate::db::eviction::strategy::EvictionStrategy>>;
 
     // 修改内存记账 (封装成行为更好，不要直接暴露 Atomic)
     fn add_memory(&self, size: usize);

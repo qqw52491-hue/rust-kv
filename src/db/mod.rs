@@ -88,7 +88,7 @@ impl LockOwner for LockedDb {
         }
     }
 
-    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, Box<dyn EvictionPolicy>>> {
+    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, crate::db::eviction::strategy::EvictionStrategy>> {
         match self {
             LockedDb::WriteNormal(node) | LockedDb::ReadNormal(node) => node.get_eviction_policy(),
             LockedDb::WriteLua(node) | LockedDb::ReadLua(node) => {

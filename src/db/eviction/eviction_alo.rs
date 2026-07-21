@@ -9,7 +9,7 @@ use crate::{
     core_time::get_cached_time_ms,
     db::{
         Storage,
-        eviction::{LockOwner, MemoryCache, NUM_SHARDS, traits::KvOperator},
+        eviction::{LockOwner, MemoryCache, NUM_SHARDS, traits::{EvictionPolicy, KvOperator}},
     },
 };
 
@@ -177,7 +177,7 @@ impl Storage {
                                 .clone()
                                 .write_owned()
                                 .await;
-                            let mut shard_operator: Box<dyn crate::db::eviction::LockOwner> =
+                            let mut shard_operator: Box<dyn crate::db::eviction::traits::LockOwner> =
                                 Box::new(crate::db::eviction::DirectCacheNode::Writeguard(
                                     shard_lock_guard,
                                 ));
