@@ -4,11 +4,11 @@ use bytes::Bytes;
 
 use crate::error::{Command, Frame, KvError};
 mod common;
-pub mod string;
-pub mod json;
-pub mod zset;
-mod list;
 mod hash;
+pub mod json;
+mod list;
+pub mod string;
+pub mod zset;
 /// 尝试从一个 Frame 中提取出 Bulk String 并转换为 String
 pub fn extract_bulk_string(frame: Option<Frame>) -> Result<String, KvError> {
     match frame {

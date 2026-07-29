@@ -1,18 +1,17 @@
 use bytes::Bytes;
 
 use crate::{
-    executor::{CommandContext, Executor},
     context::{CONN_STATE, ConnectionState},
     db::LockedDb,
-    error::{EvalCommand, ExecCommand, Frame, KvError, MultiCommand, PingCommand, UnimplementCommand},
+    error::{
+        EvalCommand, ExecCommand, Frame, KvError, MultiCommand, PingCommand, UnimplementCommand,
+    },
+    executor::{CommandContext, Executor},
     lua::lua_work::LuaTask,
 };
 use tokio::sync::oneshot;
 impl Executor for PingCommand {
-    async fn execute(
-        &self,
-        _ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
         if let Some(value) = &self.value {
             Ok(Frame::Bulk(Bytes::from(value.clone())))
         } else {
@@ -22,10 +21,7 @@ impl Executor for PingCommand {
 }
 
 impl Executor for UnimplementCommand {
-    async fn execute(
-        &self,
-        _ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, _ctx: CommandContext) -> Result<Frame, KvError> {
         Ok(Frame::Error(format!(
             "ERR unknown command '{}'",
             self.command
@@ -37,10 +33,7 @@ impl Executor for UnimplementCommand {
 这个是比较特殊的执行层
 */
 impl Executor for EvalCommand {
-    async fn execute(
-        &self,
-        ctx: CommandContext,
-    ) -> Result<Frame, KvError> {
+    async fn execute(&self, ctx: CommandContext) -> Result<Frame, KvError> {
         //   let result =   self.lua_vm_redis_call(
         // CommandContext {
         //     db: ctx.db.clone(),
@@ -48,8 +41,14 @@ impl Executor for EvalCommand {
         // }).await; // 直接 await！
         //现在我复制了这个链接
         let content = match &ctx {
-            CommandContext::Normal { connect_content, .. } => connect_content.clone(),
-            _ => return Err(KvError::ProtocolError("Eval can only run in a normal client context".to_string())),
+            CommandContext::Normal {
+                connect_content, ..
+            } => connect_content.clone(),
+            _ => {
+                return Err(KvError::ProtocolError(
+                    "Eval can only run in a normal client context".to_string(),
+                ));
+            }
         };
 
         // 这里的 Result<Frame, KvError> 就是你要通过信封回传的数据类型

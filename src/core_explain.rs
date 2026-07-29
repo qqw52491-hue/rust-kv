@@ -4,8 +4,7 @@ use crate::error::{Frame, KvError};
 use bytes::{Buf, Bytes};
 use memchr::memmem;
 use std::io::Cursor;
-/// --- 2. 核心解析逻辑 ---
-
+// --- 2. 核心解析逻辑 ---
 /// 总调度函数：尝试从可变的 BytesMut 缓冲区解析一个 Frame。
 /// 这是暴露给外部的唯一入口。
 pub fn parse_frame(buf: &[u8]) -> Result<Option<(Frame, usize)>, KvError> {
@@ -78,8 +77,11 @@ fn parse_bulk_string_from_cursor(cursor: &mut Cursor<&[u8]>) -> Result<Option<Fr
         }
         let data_len = parse_decimal(&line_bytes[1..])?;
 
-        // 检查游标后面“剩下”的数据是否足够
-        if cursor.remaining() < data_len + 2 - 1 {
+        // 数据体后面还必须有完整的 CRLF。使用 checked_add 避免恶意长度触发溢出。
+        let required_len = data_len
+            .checked_add(2)
+            .ok_or_else(|| ProtocolError("批量字符串长度溢出".into()))?;
+        if cursor.remaining() < required_len {
             return Ok(None);
         }
 
@@ -120,7 +122,7 @@ fn read_line_from_cursor<'a>(cursor: &mut Cursor<&'a [u8]>) -> Result<Option<&'a
     }
 }
 
-/// 在字节切片中查找 CRLF (`\r\n`)
+// 在字节切片中查找 CRLF (`\r\n`)
 // fn find_crlf(buf: &[u8]) -> Option<usize> {
 //     buf.windows(2).position(|window| window == b"\r\n")
 // }
@@ -139,4 +141,28 @@ fn parse_decimal(bytes: &[u8]) -> Result<usize, KvError> {
         std::str::from_utf8(bytes).map_err(|_| ProtocolError("无效的 UTF-8 数字序列".into()))?;
     s.parse::<usize>()
         .map_err(|_| ProtocolError("无效的十进制格式".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incomplete_bulk_trailer_is_not_a_panic() {
+        assert_eq!(parse_frame(b"$1\r\na\r").unwrap(), None);
+    }
+
+    #[test]
+    fn complete_bulk_frame_reports_consumed_bytes() {
+        let input = b"$3\r\nfoo\r\n";
+        let (frame, consumed) = parse_frame(input).unwrap().unwrap();
+
+        assert_eq!(frame, Frame::Bulk(Bytes::from_static(b"foo")));
+        assert_eq!(consumed, input.len());
+    }
+
+    #[test]
+    fn invalid_frame_prefix_is_reported() {
+        assert!(parse_frame(b"!broken\r\n").is_err());
+    }
 }

@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s # 每 5 秒拉取一次数据
+
+scrape_configs:
+  - job_name: 'rust-kv'
+    static_configs:
+      - targets: ['localhost:9091']

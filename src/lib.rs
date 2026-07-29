@@ -1,6 +1,4 @@
 mod aof_encoder;
-mod parser;
-mod executor;
 mod config;
 mod context;
 mod core_aof;
@@ -10,9 +8,12 @@ mod core_explain;
 mod core_time;
 mod db;
 mod domain;
+mod executor;
+mod parser;
 pub use crate::domain::error;
 pub use crate::domain::types;
 mod lua;
+pub mod replication;
 mod server;
 mod shutdown;
 
@@ -31,11 +32,31 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
+use std::time::Duration;
+use crate::db::eviction::GLOBAL_MEMORY;
+use std::sync::atomic::Ordering;
 
 /*
   各种服务的编排和关联
 */
 pub async fn run() {
+    // 启动 Prometheus Exporter 后台 HTTP 服务器 (监听 9091 端口，避开 Prometheus 自身的 9090)
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(([0, 0, 0, 0], 9091))
+        .install()
+        .expect("Failed to install Prometheus recorder");
+    println!("监控模块启动，Prometheus 指标接口: http://0.0.0.0:9091/metrics");
+
+    // 启动一个后台任务，专门负责大屏里的“内存图表”
+    tokio::spawn(async move {
+        loop {
+            // 每隔 1 秒，把当前的全局内存同步给 Prometheus
+            let mem = GLOBAL_MEMORY.load(Ordering::Relaxed);
+            metrics::gauge!("kv_total_memory_bytes").set(mem as f64);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+
     // 这个通道必须要大 这个事最基本的事情
     let (aof_tx, rx) = mpsc::channel::<AofMessage>(1000000);
     //获取类型 这个广播
@@ -44,25 +65,22 @@ pub async fn run() {
     //地基停止 广播
     let (infra_shutdown_tx, _) = broadcast::channel::<()>(1);
 
-    // 创建一个容量为 50 的“池”（通道）
-    let (lua_vm_sender, lua_vm_receiver) = flume::bounded::<Lua>(50);
+    // 创建一个容量为 lua_vm_pool_size 的“池”（通道）
+    let (lua_vm_sender, lua_vm_receiver) = flume::bounded::<Lua>(CONFIG.lua_vm_pool_size);
 
     //初始化lua 环境条件
-    let (lua_runtime, lua_handle) = init_lua_vm(lua_vm_sender).await;
+    let (lua_runtime, _lua_handle) = init_lua_vm(lua_vm_sender).await;
 
     //初始化并且直接获取sender
-    let lua_sender = start_multi_lua_actor(8, 100000);
+    let lua_sender = start_multi_lua_actor(CONFIG.lua_worker_count, CONFIG.lua_queue_depth);
 
-    let aop_file_path = "database.aof";
     // 启动专门的 AOF 写入后台任务
-    let aof_task = tokio::spawn(aof_writer_task(rx, aop_file_path, app_shutdown_tx.clone()));
+    let aof_task = tokio::spawn(aof_writer_task(rx, &CONFIG.aof_file_path));
 
     tracing_subscriber::fmt::init();
     // 1. 绑定监听地址
-    // "0.0.0.0:6380" 允许所有网卡访问（包括 Docker 容器从内部访问宿主机）
-    // 我们将其修改为了 6380，这样你可以开启双开对比性能
-    let listener = TcpListener::bind("0.0.0.0:6380").await.unwrap();
-    println!("服务器启动，监听于 0.0.0.0:6380");
+    let listener = TcpListener::bind(&CONFIG.server_addr).await.unwrap();
+    println!("服务器启动，监听于 {}", CONFIG.server_addr);
 
     //创建db
     let mut db = Db::new(&CONFIG.eviction_type);
@@ -74,7 +92,7 @@ pub async fn run() {
     };
     CONN_STATE
         .scope(initial_state, async {
-            match explain_execute_aofcommand(aop_file_path, &mut db).await {
+            match explain_execute_aofcommand(&CONFIG.aof_file_path, &mut db).await {
                 Err(e) => {
                     panic!("aof 清理失败  {}", e)
                 }
@@ -100,6 +118,20 @@ pub async fn run() {
             .store
             .eviction_memory(1024 * 1024 * 80, app_shutdown_tx.clone()),
     );
+
+    // 如果配置了 replica_of，自动启动 Slave 与 Master 之间的实实时增量复制链路
+    if let Some(ref master_addr) = CONFIG.replica_of {
+        replication::slave::start_slave_replication(
+            master_addr.clone(),
+            db.clone(),
+            app_shutdown_tx.clone(),
+        )
+        .await;
+    }
+
+    // 启动分布式集群的“造反炸弹”心跳倒计时，维护 Raft 选举机制
+    crate::replication::election::start_election_loop();
+
     let connect_shutdown = app_shutdown_tx.clone();
     //包含任务队列
     let connect_task = tokio::spawn(async move {
@@ -192,10 +224,10 @@ pub async fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::{CommandContext, Executor};
     use crate::context::{CONN_STATE, ConnectionState};
     use crate::db::Db;
     use crate::error::{Command, Frame};
+    use crate::executor::{CommandContext, Executor};
     use bytes::Bytes;
 
     #[tokio::test]
@@ -221,11 +253,7 @@ mod tests {
                 let lpush_cmd = Command::try_from(lpush_frame).expect("解析 LPUSH 命令失败");
 
                 // 3. 执行 LPUSH
-                let ctx = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx = CommandContext::Recovery { db: db.clone() };
                 let lpush_resp = lpush_cmd.execute(ctx).await.expect("LPUSH 执行失败");
 
                 // LPUSH 放入 2 个值后应该返回列表长度 2
@@ -242,29 +270,17 @@ mod tests {
                 // 因为 LPUSH 是从前部推入 (push_front) 元素，推入顺序是 "val1" 然后 "val2"
                 // 最终列表状态应为: ["val2", "val1"]
                 // 所以第一个 LPOP 出来的应该是 "val2"
-                let ctx1 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx1 = CommandContext::Recovery { db: db.clone() };
                 let lpop_resp1 = lpop_cmd.execute(ctx1).await.expect("LPOP 1 执行失败");
                 assert_eq!(lpop_resp1, Frame::Bulk(Bytes::from("val2")));
 
                 // 6. 执行 second LPOP
-                let ctx2 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx2 = CommandContext::Recovery { db: db.clone() };
                 let lpop_resp2 = lpop_cmd.execute(ctx2).await.expect("LPOP 2 执行失败");
                 assert_eq!(lpop_resp2, Frame::Bulk(Bytes::from("val1")));
 
                 // 7. 执行第三弹 LPOP (列表空，应该返回 Null)
-                let ctx3 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx3 = CommandContext::Recovery { db: db.clone() };
                 let lpop_resp3 = lpop_cmd.execute(ctx3).await.expect("LPOP 3 执行失败");
                 assert_eq!(lpop_resp3, Frame::Null);
             })
@@ -292,11 +308,7 @@ mod tests {
                     Frame::Bulk(Bytes::from("val2")),
                 ]);
                 let hset_cmd = Command::try_from(hset_frame).expect("HSET parse fail");
-                let ctx = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx = CommandContext::Recovery { db: db.clone() };
                 let hset_resp = hset_cmd.execute(ctx).await.expect("HSET exec fail");
                 assert_eq!(hset_resp, Frame::Integer(2));
 
@@ -307,11 +319,7 @@ mod tests {
                     Frame::Bulk(Bytes::from("field1")),
                 ]);
                 let hget_cmd = Command::try_from(hget_frame.clone()).expect("HGET parse fail");
-                let ctx2 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx2 = CommandContext::Recovery { db: db.clone() };
                 let hget_resp = hget_cmd.execute(ctx2).await.expect("HGET exec fail");
                 assert_eq!(hget_resp, Frame::Bulk(Bytes::from("val1")));
 
@@ -323,21 +331,13 @@ mod tests {
                     Frame::Bulk(Bytes::from("field2")),
                 ]);
                 let hdel_cmd = Command::try_from(hdel_frame).expect("HDEL parse fail");
-                let ctx3 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx3 = CommandContext::Recovery { db: db.clone() };
                 let hdel_resp = hdel_cmd.execute(ctx3).await.expect("HDEL exec fail");
                 assert_eq!(hdel_resp, Frame::Integer(2));
 
                 // 4. HGET myhash field1 again (should be null)
                 let hget_cmd2 = Command::try_from(hget_frame).expect("HGET parse fail 2");
-                let ctx4 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx4 = CommandContext::Recovery { db: db.clone() };
                 let hget_resp2 = hget_cmd2.execute(ctx4).await.expect("HGET exec fail 2");
                 assert_eq!(hget_resp2, Frame::Null);
             })
@@ -363,11 +363,7 @@ mod tests {
                     Frame::Bulk(Bytes::from("val2")),
                 ]);
                 let mset_cmd = Command::try_from(mset_frame).expect("MSET parse fail");
-                let ctx = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx = CommandContext::Recovery { db: db.clone() };
                 let mset_resp = mset_cmd.execute(ctx).await.expect("MSET exec fail");
                 assert_eq!(mset_resp, Frame::Simple("OK".to_string()));
 
@@ -377,11 +373,7 @@ mod tests {
                     Frame::Bulk(Bytes::from("key1")),
                 ]);
                 let get_cmd1 = Command::try_from(get_frame1).expect("GET parse fail");
-                let ctx2 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx2 = CommandContext::Recovery { db: db.clone() };
                 let get_resp1 = get_cmd1.execute(ctx2).await.expect("GET exec fail");
                 assert_eq!(get_resp1, Frame::Bulk(Bytes::from("val1")));
 
@@ -391,11 +383,7 @@ mod tests {
                     Frame::Bulk(Bytes::from("key2")),
                 ]);
                 let get_cmd2 = Command::try_from(get_frame2).expect("GET parse fail 2");
-                let ctx3 = CommandContext::Recovery {
-                    db: db.clone(),
-                    
-                    
-                };
+                let ctx3 = CommandContext::Recovery { db: db.clone() };
                 let get_resp2 = get_cmd2.execute(ctx3).await.expect("GET exec fail 2");
                 assert_eq!(get_resp2, Frame::Bulk(Bytes::from("val2")));
             })

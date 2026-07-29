@@ -1,9 +1,6 @@
 use flume::Receiver;
 use mlua::Lua;
-use tokio::{
-    sync::mpsc::Sender,
-    task_local,
-};
+use tokio::{sync::mpsc::Sender, task_local};
 
 use crate::lua::lua_work::{LuaRouter, LuaTask};
 

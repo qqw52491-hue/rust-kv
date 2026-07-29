@@ -7,7 +7,6 @@ use crate::db::eviction::{
     lru::lru_linklist::{LruList, Node},
 };
 
-
 pub struct LruNode {
     pub list: LruList,
     pub sample_keys: Vec<Arc<String>>, // O(1) 采样数组
@@ -91,9 +90,12 @@ impl EvictionPolicy for LruNode {
     }
 
     fn get_random_sample_key(&self) -> Option<Arc<String>> {
+        if self.sample_keys.is_empty() {
+            return None;
+        }
         //随机从当前分片 抽取一个key
         let random_active_index = rand::thread_rng().gen_range(0..self.sample_keys.len());
-        Some(self.sample_keys.get(random_active_index).cloned().unwrap())
+        self.sample_keys.get(random_active_index).cloned()
     }
 
     fn pop_victim(&mut self) -> Option<Arc<String>> {

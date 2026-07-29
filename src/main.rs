@@ -7,16 +7,13 @@ pub fn add(left: usize, right: usize) -> usize {
     left + right
 }
 
-
-
-
 // 你的“正常”代码在上面...
 // ...
 
 #[cfg(test)]
 mod tests {
     // 引入你“上面”写的代码
-    use super::*; 
+    use super::*;
     // 引入 mlua
     use mlua::prelude::*;
 
@@ -29,7 +26,8 @@ mod tests {
 
         // 2. 异步执行脚本
         //    (我们用 .await 替代了 .unwrap() 来处理异步)
-        let result: i32 = lua.load("return 1.123 + 1231")
+        let result: i32 = lua
+            .load("return 1.123 + 1231")
             .eval_async()
             .await
             .expect("Lua 脚本执行失败!"); // 如果失败，测试会在这里 panic

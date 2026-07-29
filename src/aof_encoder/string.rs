@@ -13,7 +13,9 @@ impl AofEncoder for SetCommand {
         ctx: AofContent<'a>,
     ) -> Result<(), String> {
         let mut frame_vec = vec![crate::error::Frame::Bulk(Bytes::from_static(b"SET"))];
-        frame_vec.push(crate::error::Frame::Bulk(Bytes::copy_from_slice(self.key.as_bytes())));
+        frame_vec.push(crate::error::Frame::Bulk(Bytes::copy_from_slice(
+            self.key.as_bytes(),
+        )));
         frame_vec.push(crate::error::Frame::Bulk(Bytes::from(self.value.clone())));
         if let Some(expire) = &self.expiration {
             match expire {
@@ -39,21 +41,25 @@ impl AofEncoder for SetCommand {
                 }
             }
         }
-        ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await
+        ctx.aof_tx
+            .send(Frame::Array(frame_vec).serialize())
+            .await
             .map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }
-
-
 
 impl AofEncoder for MSetCommand {
     async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
         let mut frame_vec = vec![crate::error::Frame::Bulk(Bytes::from_static(b"MSET"))];
         for (key, val) in &self.keys_and_values {
-            frame_vec.push(crate::error::Frame::Bulk(Bytes::copy_from_slice(key.as_bytes())));
+            frame_vec.push(crate::error::Frame::Bulk(Bytes::copy_from_slice(
+                key.as_bytes(),
+            )));
             frame_vec.push(crate::error::Frame::Bulk(val.clone()));
         }
-        ctx.aof_tx.send(Frame::Array(frame_vec).serialize()).await
+        ctx.aof_tx
+            .send(Frame::Array(frame_vec).serialize())
+            .await
             .map_err(|e| format!("发送AOF消息失败: {}", e))
     }
 }

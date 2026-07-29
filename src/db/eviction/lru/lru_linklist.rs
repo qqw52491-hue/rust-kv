@@ -17,7 +17,7 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone )]
+#[derive(Debug)]
 pub struct LruList {
     head: Option<NonNull<Node>>,
     tail: Option<NonNull<Node>>,
@@ -64,7 +64,6 @@ impl LruList {
         self.tail = Some(new_node_ptr);
         new_node_ptr
     }
-
 
     pub fn push_mid_back(&mut self, node_ptr: NonNull<Node>) {
         // 如果节点已经是尾节点，直接返回
@@ -153,7 +152,8 @@ impl LruList {
 
     //删除指定节点
     pub fn pop_node(&mut self, node_ptr: NonNull<Node>) {
-        self.len -= 1;
+        debug_assert!(self.len > 0, "LruList::pop_node called on empty list or node double-freed");
+        self.len = self.len.saturating_sub(1);
         unsafe {
             let prev = (*node_ptr.as_ptr()).prev;
             let next = (*node_ptr.as_ptr()).next;
@@ -175,5 +175,11 @@ impl LruList {
             // 释放节点内存
             let _ = Box::from_raw(node_ptr.as_ptr());
         }
+    }
+}
+
+impl Drop for LruList {
+    fn drop(&mut self) {
+        while self.pop_front().is_some() {}
     }
 }

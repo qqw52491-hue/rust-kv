@@ -8,10 +8,20 @@ use tokio::{
 };
 
 use crate::{
-    executor::{CommandContext, Executor}, context::ConnectionState, db::{
-        eviction::{MemoryCache, traits::{KvOperator, Transactional}},
+    context::ConnectionState,
+    db::{
         LockedDb,
-    }, error::{Command, EvalCommand, Frame, KvError}, lua::{lua_exchange::lua_value_to_bulk_frame, lua_work::{CURRENT_ENV, CurrentRequestEnv}}
+        eviction::{
+            MemoryCache,
+            traits::{KvOperator, Transactional},
+        },
+    },
+    error::{Command, EvalCommand, Frame, KvError},
+    executor::{CommandContext, Executor},
+    lua::{
+        lua_exchange::lua_value_to_bulk_frame,
+        lua_work::{CURRENT_ENV, CurrentRequestEnv},
+    },
 };
 
 impl EvalCommand {
@@ -24,38 +34,50 @@ impl EvalCommand {
         //预期执行
         let result: Result<Frame, mlua::Error> = lua.load(script).eval_async::<Frame>().await;
         //在执行之后 session 肯定有了
-        let sessions = CURRENT_ENV
-            .with(|cell| {
-                // 1. 获取写锁 (RefMut<Option<CurrentRequestEnv>>)
-                let borrow = cell.borrow_mut();
-                borrow.as_ref().unwrap().sessions.clone()
-            });
+        let sessions = CURRENT_ENV.with(|cell| {
+            // 1. 获取写锁 (RefMut<Option<CurrentRequestEnv>>)
+            let borrow = cell.borrow_mut();
+            borrow.as_ref().unwrap().sessions.clone()
+        });
         // 【在这里】统一进行错误类型转换
         let final_result: Result<Frame, KvError> = result.map_err(|e| {
             // 把 mlua 的错误转成你的 KvError
             // 这样你的系统内部就统一了
             KvError::ProtocolError(format!("Lua脚本错误: {}", e))
         });
-        let mut entry = sessions.lock().await;
-        //如果没有问题就提交
-        if final_result.is_ok() {
-            // 【新增】在提交内存前，把所有成功的命令一起写入 AOF
-            let (buffer, ctx) = CURRENT_ENV.with(|cell| {
-                let mut borrow = cell.borrow_mut();
-                let env = borrow.as_mut().unwrap();
-                (std::mem::take(&mut env.lua_aof_buffer), env.ctx.clone())
-            });
+        let commit_ok = final_result.is_ok();
+        {
+            let mut entry = sessions.lock().await;
+            if commit_ok {
+                // 【新增】在提交内存前，把所有成功的命令一起写入 AOF
+                let (buffer, ctx) = CURRENT_ENV.with(|cell| {
+                    let mut borrow = cell.borrow_mut();
+                    let env = borrow.as_mut().unwrap();
+                    (std::mem::take(&mut env.lua_aof_buffer), env.ctx.clone())
+                });
 
-            if !buffer.is_empty() {
-                let multi_group = crate::error::Command::MultiGroup(buffer);
-                ctx.send_aof(&multi_group).await;
-            }
+                if !buffer.is_empty() {
+                    let multi_group = crate::error::Command::MultiGroup(buffer);
+                    ctx.send_aof(&multi_group).await;
+                }
 
-            //拿出arc 的所有权 并且全部提交
-            for (_size, mut lock) in entry.drain() {
-                lock.commit();
+                // 拿出所有 guard 保证跨分片原子性提交，防止可见性窗口
+                let mut locks: Vec<LockedDb> = entry.drain().map(|(_, l)| l).collect();
+                for lock in locks.iter_mut() {
+                    lock.commit();
+                }
+                // 这里统一 drop locks，释放所有分片的锁
+            } else {
+                // 如果执行失败，把锁 drain 出来直接 drop 进行回滚（不执行 commit）
+                entry.drain();
             }
         }
+        
+        // 【关键修复】清理 thread_local，防止上一次请求的报错导致 env 和 锁 跨请求残留，卡死其他连接
+        CURRENT_ENV.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+
         final_result
     }
 }
@@ -117,10 +139,10 @@ pub async fn general_lua() -> Result<Lua, KvError> {
                     let ctx = CommandContext::Lua {
                         lua_sessions: sessions.clone(),
                     };
-                    let frame = command.execute(ctx)
-                        .await
-                        .map_err(|e| mlua::Error::runtime(format!("lua 脚本内部命令执行失败: {:?}", e)))?;
-                    
+                    let frame = command.execute(ctx).await.map_err(|e| {
+                        mlua::Error::runtime(format!("lua 脚本内部命令执行失败: {:?}", e))
+                    })?;
+
                     // 【追加】如果命令执行成功，把它塞进环境的 buffer 里
                     CURRENT_ENV.with(|cell| {
                         if let Some(env) = cell.borrow_mut().as_mut() {
@@ -146,11 +168,7 @@ pub async fn general_lua() -> Result<Lua, KvError> {
     Ok(lua)
 }
 
-pub async fn init_lua_pre(
-    lua: &Lua,
-    command: &EvalCommand,
-    command_content:CommandContext,
-)  {
+pub async fn init_lua_pre(lua: &Lua, command: &EvalCommand, command_content: CommandContext) {
     let mut shard_indices: Vec<usize> = command
         .keys
         .clone()
@@ -199,17 +217,17 @@ pub async fn init_lua_pre(
         sessions.lock().await.insert(shard_index, guard);
     }
     // 组装环境包
-        let env = CurrentRequestEnv {
-            ctx: command_content,
-            sessions,
-            command: command.clone(),
-            lua_aof_buffer: Vec::new(),
-        };
+    let env = CurrentRequestEnv {
+        ctx: command_content,
+        sessions,
+        command: command.clone(),
+        lua_aof_buffer: Vec::new(),
+    };
 
-        // 这一步非常快，不存在阻塞
-        CURRENT_ENV.with(|cell| {
-            *cell.borrow_mut() = Some(env);
-        });
+    // 这一步非常快，不存在阻塞
+    CURRENT_ENV.with(|cell| {
+        *cell.borrow_mut() = Some(env);
+    });
 }
 //初始化放入通道
 pub async fn init_lua_vm(sender: Sender<Lua>) -> (Runtime, Handle) {

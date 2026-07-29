@@ -1,8 +1,8 @@
 use std::{sync::Arc, vec::IntoIter};
 
 use crate::{
-    parser::{extract_bulk_bytes, extract_bulk_string, Parser},
-    error::{Command, Frame, KvError, LPushCommand, LPopCommand, BLPopCommand},
+    error::{BLPopCommand, Command, Frame, KvError, LPopCommand, LPushCommand},
+    parser::{Parser, extract_bulk_bytes, extract_bulk_string},
 };
 
 impl Parser for LPushCommand {
@@ -22,9 +22,7 @@ impl Parser for LPushCommand {
 impl Parser for LPopCommand {
     fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
         let key = extract_bulk_string(itor.next())?;
-        Ok(Command::LPop(LPopCommand {
-            key: Arc::new(key),
-        }))
+        Ok(Command::LPop(LPopCommand { key: Arc::new(key) }))
     }
 }
 
@@ -32,7 +30,9 @@ impl Parser for BLPopCommand {
     fn parse(mut itor: IntoIter<Frame>, _command_name: String) -> Result<Command, KvError> {
         let key = extract_bulk_string(itor.next())?;
         let timeout_str = extract_bulk_string(itor.next())?;
-        let timeout = timeout_str.parse::<u64>().map_err(|_| KvError::ProtocolError("Invalid timeout".into()))?;
+        let timeout = timeout_str
+            .parse::<u64>()
+            .map_err(|_| KvError::ProtocolError("Invalid timeout".into()))?;
         Ok(Command::BLPop(BLPopCommand {
             key: Arc::new(key),
             timeout,

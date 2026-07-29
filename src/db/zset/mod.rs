@@ -1,8 +1,8 @@
 pub mod skip_list;
 
-use std::collections::HashMap;
 use bytes::Bytes;
 use skip_list::SkipList;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct ZSet {
@@ -88,7 +88,8 @@ impl ZSet {
 
     /// Rough calculation of heap memory usage
     pub fn heap_memory_size(&self) -> usize {
-        let dict_size = self.dict.capacity() * (std::mem::size_of::<Bytes>() + std::mem::size_of::<f64>() + 8);
+        let dict_size =
+            self.dict.capacity() * (std::mem::size_of::<Bytes>() + std::mem::size_of::<f64>() + 8);
         let zsl_size = self.zsl.nodes.capacity() * std::mem::size_of::<skip_list::Node>();
         dict_size + zsl_size
     }

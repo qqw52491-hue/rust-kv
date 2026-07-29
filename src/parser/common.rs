@@ -1,8 +1,8 @@
 use std::vec::IntoIter;
 
 use crate::{
-    parser::{extract_bulk_string, Parser},
     error::{Command, EvalCommand, Frame, KvError, PingCommand, UnimplementCommand},
+    parser::{Parser, extract_bulk_string},
 };
 
 impl Parser for PingCommand {

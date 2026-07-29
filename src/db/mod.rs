@@ -11,7 +11,10 @@ pub mod zset;
 use crate::{
     config::EvictionType,
     context::CONN_STATE,
-    db::eviction::{KvOperator, LockOwner, MemoryCache, DirectCacheNode, LuaCacheNode, Transactional, EvictionPolicy},
+    db::eviction::{
+        DirectCacheNode, EvictionPolicy, KvOperator, LockOwner, LuaCacheNode, MemoryCache,
+        Transactional,
+    },
     types::ValueEntry,
 };
 
@@ -85,10 +88,12 @@ impl LockOwner for LockedDb {
         }
     }
 
-    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, Box<dyn EvictionPolicy>>> {
+    fn get_eviction_policy(&self) -> Option<std::sync::MutexGuard<'_, crate::db::eviction::strategy::EvictionStrategy>> {
         match self {
             LockedDb::WriteNormal(node) | LockedDb::ReadNormal(node) => node.get_eviction_policy(),
-            LockedDb::WriteLua(node) | LockedDb::ReadLua(node) => node.db_store.get_eviction_policy(),
+            LockedDb::WriteLua(node) | LockedDb::ReadLua(node) => {
+                node.db_store.get_eviction_policy()
+            }
         }
     }
 
@@ -111,7 +116,16 @@ impl LockOwner for LockedDb {
 pub struct Storage {
     pub(crate) store: Arc<Vec<Arc<MemoryCache>>>,
     // 阻塞队列通知中心: HashMap<DB_Index, HashMap<Key, VecDeque<Sender>>>
-    pub(crate) blocking_queues: Arc<Vec<tokio::sync::Mutex<std::collections::HashMap<Arc<String>, std::collections::VecDeque<tokio::sync::oneshot::Sender<bytes::Bytes>>>>>>,
+    pub(crate) blocking_queues: Arc<
+        Vec<
+            tokio::sync::Mutex<
+                std::collections::HashMap<
+                    Arc<String>,
+                    std::collections::VecDeque<tokio::sync::oneshot::Sender<bytes::Bytes>>,
+                >,
+            >,
+        >,
+    >,
 }
 
 impl Storage {

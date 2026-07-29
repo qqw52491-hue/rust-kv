@@ -1,14 +1,12 @@
 use std::error::Error;
-use std::fs::File;
 
 use std::io::{self, Read, Write};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc::Receiver;
-use tokio::time::{self, Duration};
 
 use crate::Db;
+use crate::config::{AofFsync, CONFIG};
 use crate::core_execute::execute_command;
 use crate::core_explain::parse_frame;
 use crate::error::Command;
@@ -16,7 +14,7 @@ use crate::error::Command;
 // 定义管道里传递的消息类型，这里就是序列化后的命令
 pub type AofMessage = Vec<u8>;
 
-pub async fn aof_writer_task(mut rx: Receiver<AofMessage>, path: &str, sender: Sender<()>) {
+pub async fn aof_writer_task(mut rx: Receiver<AofMessage>, path: &str) {
     // 打开 AOF 文件
     let mut file = BufWriter::new(
         OpenOptions::new()
@@ -29,60 +27,63 @@ pub async fn aof_writer_task(mut rx: Receiver<AofMessage>, path: &str, sender: S
 
     // 1. 初始化缓冲区 (只分配一次内存，复用)
     let mut buffer: Vec<AofMessage> = Vec::with_capacity(5000);
-    // 2. 订阅停机信号
-    let mut shutdown_rx = sender.subscribe();
+    
+    // 定时器：每秒触发一次真正的物理刷盘 (类似 Redis 的 everysec)
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
-    'main_loop: loop {
-        // 3. 【核心修改】同时等待“新数据”和“停机信号”
-        //    谁先来处理谁，不会傻等
-        let first_msg = tokio::select! {
-            // 情况 A: 收到数据
-            res = rx.recv() => {
-                match res {
-                    Some(msg) => msg,
-                    None => break 'main_loop, // 发送端彻底关闭
+    loop {
+        tokio::select! {
+            // 分支 1：通道里有新命令来了
+            msg_opt = rx.recv() => {
+                let first_msg = match msg_opt {
+                    Some(m) => m,
+                    None => break, // 通道关闭，准备停机
+                };
+
+                buffer.push(first_msg);
+
+                // 贪婪批处理：一口气把通道里积压的都拿出来，最多 5000 条
+                while buffer.len() < 5000 {
+                    match rx.try_recv() {
+                        Ok(msg) => buffer.push(msg),
+                        Err(_) => break, 
+                    }
                 }
-            },
-            // 情况 B: 收到停机信号
-            _ = shutdown_rx.recv() => {
-                println!("AOF 任务收到停机信号，准备停止...");
-                break 'main_loop; // 跳出循环，去执行下面的收尾
+
+                // 批量落盘 (写到 OS 缓存)
+                for msg in &buffer {
+                    if let Err(e) = file.write_all(msg).await {
+                        tracing::error!("AOF 写入失败: {}", e);
+                    }
+                }
+                // flush 将缓冲内容交给操作系统 Page Cache，速度极快
+                if let Err(e) = file.flush().await {
+                    tracing::error!("AOF 刷盘失败: {}", e);
+                }
+
+                // Always 模式：每次写入后立即物理落盘 (极低 QPS)
+                if CONFIG.aof_fsync == AofFsync::Always {
+                    if let Err(e) = file.get_ref().sync_data().await {
+                        tracing::error!("AOF Always sync_data 失败: {}", e);
+                    }
+                }
+
+                buffer.clear();
             }
-        };
-
-        // --- 正常处理逻辑 ---
-
-        // 先存入第一条
-        buffer.push(first_msg);
-
-        // 4. 【贪婪批处理】趁热打铁
-        //    看看通道里是不是还积压了一堆？有的话全捞出来 (最多捞5000条防止卡死)
-        while buffer.len() < 5000 {
-            match rx.try_recv() {
-                Ok(msg) => buffer.push(msg),
-                Err(_) => break, // 通道暂时空了，别等了，赶紧写盘
-            }
-        }
-
-        // 5. 批量落盘
-        if !buffer.is_empty() {
-            for msg in &buffer {
-                if let Err(e) = file.write_all(msg).await {
-                    tracing::error!("AOF 写入失败: {}", e);
+            // 分支 2：每一秒钟到了
+            _ = interval.tick() => {
+                // EverySec 模式：每秒后台强制执行一次物理落盘
+                if CONFIG.aof_fsync == AofFsync::EverySec {
+                    if let Err(e) = file.get_ref().sync_data().await {
+                        tracing::error!("AOF 每秒后台定时 sync_data 失败: {}", e);
+                    }
                 }
             }
-            // 必须 flush 确保数据真正进入磁盘
-            if let Err(e) = file.flush().await {
-                tracing::error!("AOF 刷盘失败: {}", e);
-            }
-
-            // 6. 【关键】写完再清空，复用容量
-            buffer.clear();
         }
     }
 
     // --- 7. 【安全着陆】停机收尾逻辑 ---
-    // 循环跳出后，通道里可能还残留着几百条数据，必须写完再走！
+    // 所有 Sender 已释放，通道内仍可能有少量数据，最终排空并同步到存储设备。
     println!("AOF 正在执行最后的数据落盘 (Draining)...");
 
     // 把剩下的全捞出来
@@ -93,12 +94,19 @@ pub async fn aof_writer_task(mut rx: Receiver<AofMessage>, path: &str, sender: S
     // 最后一次写入
     if !buffer.is_empty() {
         for msg in &buffer {
-            let _ = file.write_all(msg).await;
+            if let Err(e) = file.write_all(msg).await {
+                tracing::error!("AOF 最终写入失败: {}", e);
+            }
         }
-        let _ = file.flush().await;
     }
-
-    println!("AOF 任务已安全退出，数据零丢失。");
+    if let Err(e) = file.flush().await {
+        tracing::error!("AOF 最终 flush 失败: {}", e);
+    }
+    if let Err(e) = file.get_ref().sync_data().await {
+        tracing::error!("AOF 最终 sync_data 失败: {}", e);
+    } else {
+        println!("AOF 任务已安全退出，停机前数据已同步到磁盘。");
+    }
 }
 
 pub async fn explain_execute_aofcommand(
@@ -242,4 +250,34 @@ pub async fn explain_execute_aofcommand(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn writer_drains_channel_after_all_senders_are_dropped() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("kv-aof-{unique}.aof"));
+        let path_string = path.to_string_lossy().into_owned();
+        let writer_path = path_string.clone();
+        let (tx, rx) = mpsc::channel(4);
+
+        let writer = tokio::spawn(async move {
+            aof_writer_task(rx, &writer_path).await;
+        });
+        tx.send(b"first".to_vec()).await.unwrap();
+        tx.send(b"second".to_vec()).await.unwrap();
+        drop(tx);
+
+        writer.await.unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"firstsecond");
+        tokio::fs::remove_file(path).await.unwrap();
+    }
 }

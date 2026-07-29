@@ -1,9 +1,9 @@
-use bytes::Bytes;
 use crate::{
     aof_encoder::{AofContent, AofEncoder},
     domain::command::JsonSetCommand,
     error::Frame,
 };
+use bytes::Bytes;
 
 impl AofEncoder for JsonSetCommand {
     async fn encode_aof<'a>(&self, ctx: AofContent<'a>) -> Result<(), String> {
