@@ -5,6 +5,7 @@ use crate::db::Db;
 use crate::error::{Command, Frame};
 use bytes::{Buf, BytesMut};
 use std::error::Error;
+use std::io::IoSlice;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -62,7 +63,14 @@ pub async fn handle_connection(
                         buf.advance(index + 2);
                     }
                 } else {
-                    //println!("{:?}", std::str::from_utf8(&buf));
+                    if is_psync_request(&buf) {
+                        // 这是一个从节点 (Slave) 发起的复制握手，移交套接字给 Replication Hub 负责推流
+                        return crate::replication::handle_slave_psync(
+                            socket,
+                            connection_content.shutdown_tx,
+                        )
+                        .await;
+                    }
                     match explain_execute_command(&mut buf, &mut db, &mut connection_content).await
                     {
                         Ok(result) => {
@@ -70,13 +78,8 @@ pub async fn handle_connection(
                                 // 非 pipeline 模式，直接发送首个响应，避免多余的 BytesMut 申请与数据拷贝
                                 socket.write_all(&result[0]).await?;
                             } else if !result.is_empty() {
-                                // pipeline 模式，预先精确分配内存，避免中间过程触发 reallocate 扩容
-                                let total_len: usize = result.iter().map(|x| x.len()).sum();
-                                let mut out_buf = bytes::BytesMut::with_capacity(total_len);
-                                for item in result {
-                                    out_buf.extend_from_slice(&item);
-                                }
-                                socket.write_all(&out_buf).await?;
+                                // pipeline 模式：采用 Vectored I/O (writev) 零拷贝向量化发送，彻底消除内存拷贝开销！
+                                write_all_vectored(&mut socket, &result).await?;
                             }
                         }
                         Err(e) => {
@@ -161,4 +164,32 @@ async fn explain_execute_command(
 // 如果找到，返回 `\r` 的位置索引。
 fn find_crlf_idiomatic(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|window| window == b"\r\n")
+}
+
+fn is_psync_request(buf: &[u8]) -> bool {
+    let s = String::from_utf8_lossy(buf);
+    s.contains("PSYNC") || s.contains("psync")
+}
+
+/// 使用 Linux writev (Vectored I/O) 实现的零拷贝批量写入辅助函数。
+/// 将多个独立的响应 Memory Buffer 组合成 IoSlice 数组，内核直接按指针发送，避免用户态内存拷贝。
+async fn write_all_vectored(
+    socket: &mut TcpStream,
+    bufs: &[Vec<u8>],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut io_slices: Vec<IoSlice> = bufs.iter().map(|b| IoSlice::new(b)).collect();
+    let mut slices = &mut io_slices[..];
+
+    while !slices.is_empty() {
+        let written = socket.write_vectored(slices).await?;
+        if written == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "failed to write whole buffer using write_vectored",
+            )
+            .into());
+        }
+        IoSlice::advance_slices(&mut slices, written);
+    }
+    Ok(())
 }

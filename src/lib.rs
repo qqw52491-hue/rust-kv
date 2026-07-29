@@ -13,6 +13,7 @@ mod parser;
 pub use crate::domain::error;
 pub use crate::domain::types;
 mod lua;
+pub mod replication;
 mod server;
 mod shutdown;
 
@@ -117,6 +118,20 @@ pub async fn run() {
             .store
             .eviction_memory(1024 * 1024 * 80, app_shutdown_tx.clone()),
     );
+
+    // 如果配置了 replica_of，自动启动 Slave 与 Master 之间的实实时增量复制链路
+    if let Some(ref master_addr) = CONFIG.replica_of {
+        replication::slave::start_slave_replication(
+            master_addr.clone(),
+            db.clone(),
+            app_shutdown_tx.clone(),
+        )
+        .await;
+    }
+
+    // 启动分布式集群的“造反炸弹”心跳倒计时，维护 Raft 选举机制
+    crate::replication::election::start_election_loop();
+
     let connect_shutdown = app_shutdown_tx.clone();
     //包含任务队列
     let connect_task = tokio::spawn(async move {

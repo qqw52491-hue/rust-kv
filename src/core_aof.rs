@@ -6,6 +6,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::mpsc::Receiver;
 
 use crate::Db;
+use crate::config::{AofFsync, CONFIG};
 use crate::core_execute::execute_command;
 use crate::core_explain::parse_frame;
 use crate::error::Command;
@@ -26,37 +27,58 @@ pub async fn aof_writer_task(mut rx: Receiver<AofMessage>, path: &str) {
 
     // 1. 初始化缓冲区 (只分配一次内存，复用)
     let mut buffer: Vec<AofMessage> = Vec::with_capacity(5000);
-    // AOF 不直接监听应用停机广播。连接任务全部退出、所有 Sender 被释放后，
-    // recv() 才会返回 None，从而保证不会漏掉停机期间仍在途的写命令。
-    while let Some(first_msg) = rx.recv().await {
-        // --- 正常处理逻辑 ---
+    
+    // 定时器：每秒触发一次真正的物理刷盘 (类似 Redis 的 everysec)
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
-        // 先存入第一条
-        buffer.push(first_msg);
+    loop {
+        tokio::select! {
+            // 分支 1：通道里有新命令来了
+            msg_opt = rx.recv() => {
+                let first_msg = match msg_opt {
+                    Some(m) => m,
+                    None => break, // 通道关闭，准备停机
+                };
 
-        // 4. 【贪婪批处理】趁热打铁
-        //    看看通道里是不是还积压了一堆？有的话全捞出来 (最多捞5000条防止卡死)
-        while buffer.len() < 5000 {
-            match rx.try_recv() {
-                Ok(msg) => buffer.push(msg),
-                Err(_) => break, // 通道暂时空了，别等了，赶紧写盘
+                buffer.push(first_msg);
+
+                // 贪婪批处理：一口气把通道里积压的都拿出来，最多 5000 条
+                while buffer.len() < 5000 {
+                    match rx.try_recv() {
+                        Ok(msg) => buffer.push(msg),
+                        Err(_) => break, 
+                    }
+                }
+
+                // 批量落盘 (写到 OS 缓存)
+                for msg in &buffer {
+                    if let Err(e) = file.write_all(msg).await {
+                        tracing::error!("AOF 写入失败: {}", e);
+                    }
+                }
+                // flush 将缓冲内容交给操作系统 Page Cache，速度极快
+                if let Err(e) = file.flush().await {
+                    tracing::error!("AOF 刷盘失败: {}", e);
+                }
+
+                // Always 模式：每次写入后立即物理落盘 (极低 QPS)
+                if CONFIG.aof_fsync == AofFsync::Always {
+                    if let Err(e) = file.get_ref().sync_data().await {
+                        tracing::error!("AOF Always sync_data 失败: {}", e);
+                    }
+                }
+
+                buffer.clear();
             }
-        }
-
-        // 5. 批量落盘
-        if !buffer.is_empty() {
-            for msg in &buffer {
-                if let Err(e) = file.write_all(msg).await {
-                    tracing::error!("AOF 写入失败: {}", e);
+            // 分支 2：每一秒钟到了
+            _ = interval.tick() => {
+                // EverySec 模式：每秒后台强制执行一次物理落盘
+                if CONFIG.aof_fsync == AofFsync::EverySec {
+                    if let Err(e) = file.get_ref().sync_data().await {
+                        tracing::error!("AOF 每秒后台定时 sync_data 失败: {}", e);
+                    }
                 }
             }
-            // flush 将缓冲内容交给操作系统；最终停机阶段再用 sync_data 落盘。
-            if let Err(e) = file.flush().await {
-                tracing::error!("AOF 刷盘失败: {}", e);
-            }
-
-            // 6. 【关键】写完再清空，复用容量
-            buffer.clear();
         }
     }
 

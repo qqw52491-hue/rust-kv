@@ -37,27 +37,26 @@ pub struct LuaRouter {
 }
 
 impl LuaRouter {
-    // 【核心修改】智能分发：找最闲的那个线程
     pub async fn dispatch(&self, task: LuaTask) -> Result<(), KvError> {
-        // 1. 寻找剩余容量最大的那个通道索引 (Least Queue Depth)
-        //    max_by_key 会遍历 Vec，找到 capacity() 最大的那个
-        //    对于 8~16 个线程来说，这个循环非常快
-        let mut best_index = 0;
-        let mut max_capacity = 0;
+        let n = self.senders.len();
+        if n == 0 {
+            return Err(KvError::ProtocolError("Lua 引擎过载或已关闭".into()));
+        }
 
-        for (i, sender) in self.senders.iter().enumerate() {
-            let cap = sender.capacity();
-            // 如果发现有空闲容量更大的，记录下来
+        // 随机起点，避免容量相同时永远偏向 index 0
+        let offset = rand::random::<usize>() % n;
+        let mut best_index = offset;
+        let mut max_capacity = self.senders[offset].capacity();
+
+        for k in 1..n {
+            let i = (offset + k) % n;
+            let cap = self.senders[i].capacity();
             if cap > max_capacity {
                 max_capacity = cap;
                 best_index = i;
             }
         }
 
-        // 小优化：如果所有通道都满了 (capacity 都是 0)，那就退化成随机或者轮询
-        // 不过这里我们直接硬发给 best_index，让它去排队等待（Tokio 会处理背压）
-
-        // 2. 发送任务给选中的“幸运儿”
         self.senders[best_index]
             .send(task)
             .await

@@ -16,7 +16,12 @@ macro_rules! get_write_lock {
             crate::executor::CommandContext::Lua { lua_sessions } => {
                 let shard_index = crate::db::eviction::MemoryCache::get_shard_index($key);
                 $sessions_guard = lua_sessions.lock().await;
-                $sessions_guard.get_mut(&shard_index).unwrap()
+                match $sessions_guard.get_mut(&shard_index) {
+                    Some(lock) => lock,
+                    None => return Err(crate::error::KvError::ProtocolError(
+                        format!("脚本访问了未在 KEYS 中声明的 key（shard {}）", shard_index)
+                    )),
+                }
             }
             crate::executor::CommandContext::Normal { db, .. }
             | crate::executor::CommandContext::Recovery { db } => {
@@ -34,7 +39,12 @@ macro_rules! get_read_lock {
             crate::executor::CommandContext::Lua { lua_sessions } => {
                 let shard_index = crate::db::eviction::MemoryCache::get_shard_index($key);
                 $sessions_guard = lua_sessions.lock().await;
-                $sessions_guard.get_mut(&shard_index).unwrap()
+                match $sessions_guard.get_mut(&shard_index) {
+                    Some(lock) => lock,
+                    None => return Err(crate::error::KvError::ProtocolError(
+                        format!("脚本访问了未在 KEYS 中声明的 key（shard {}）", shard_index)
+                    )),
+                }
             }
             crate::executor::CommandContext::Normal { db, .. }
             | crate::executor::CommandContext::Recovery { db } => {
@@ -75,14 +85,22 @@ impl CommandContext {
             connect_content, ..
         } = self
         {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+            let aof_tx_real = &connect_content.aof_tx;
+
             if let Err(e) = cmd
                 .encode_aof_command(crate::aof_encoder::AofContent {
-                    aof_tx: &connect_content.aof_tx,
+                    aof_tx: &tx,
                     shutdown_tx: &connect_content.shutdown_tx,
                 })
                 .await
             {
                 eprintln!("AOF Append Failed: {}", e);
+            }
+
+            while let Ok(msg) = rx.try_recv() {
+                let _ = aof_tx_real.send(msg.clone()).await;
+                crate::replication::master::broadcast_bytes_to_slaves(msg);
             }
         }
     }

@@ -45,26 +45,39 @@ impl EvalCommand {
             // 这样你的系统内部就统一了
             KvError::ProtocolError(format!("Lua脚本错误: {}", e))
         });
-        let mut entry = sessions.lock().await;
-        //如果没有问题就提交
-        if final_result.is_ok() {
-            // 【新增】在提交内存前，把所有成功的命令一起写入 AOF
-            let (buffer, ctx) = CURRENT_ENV.with(|cell| {
-                let mut borrow = cell.borrow_mut();
-                let env = borrow.as_mut().unwrap();
-                (std::mem::take(&mut env.lua_aof_buffer), env.ctx.clone())
-            });
+        let commit_ok = final_result.is_ok();
+        {
+            let mut entry = sessions.lock().await;
+            if commit_ok {
+                // 【新增】在提交内存前，把所有成功的命令一起写入 AOF
+                let (buffer, ctx) = CURRENT_ENV.with(|cell| {
+                    let mut borrow = cell.borrow_mut();
+                    let env = borrow.as_mut().unwrap();
+                    (std::mem::take(&mut env.lua_aof_buffer), env.ctx.clone())
+                });
 
-            if !buffer.is_empty() {
-                let multi_group = crate::error::Command::MultiGroup(buffer);
-                ctx.send_aof(&multi_group).await;
-            }
+                if !buffer.is_empty() {
+                    let multi_group = crate::error::Command::MultiGroup(buffer);
+                    ctx.send_aof(&multi_group).await;
+                }
 
-            //拿出arc 的所有权 并且全部提交
-            for (_size, mut lock) in entry.drain() {
-                lock.commit();
+                // 拿出所有 guard 保证跨分片原子性提交，防止可见性窗口
+                let mut locks: Vec<LockedDb> = entry.drain().map(|(_, l)| l).collect();
+                for lock in locks.iter_mut() {
+                    lock.commit();
+                }
+                // 这里统一 drop locks，释放所有分片的锁
+            } else {
+                // 如果执行失败，把锁 drain 出来直接 drop 进行回滚（不执行 commit）
+                entry.drain();
             }
         }
+        
+        // 【关键修复】清理 thread_local，防止上一次请求的报错导致 env 和 锁 跨请求残留，卡死其他连接
+        CURRENT_ENV.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+
         final_result
     }
 }
